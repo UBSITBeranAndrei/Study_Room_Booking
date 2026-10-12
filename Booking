@@ -1,9 +1,6 @@
 <?php
-require_once __DIR__ . '/db.php';
-
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+session_start();
+require_once __DIR__ . '/dbconn.php';
 date_default_timezone_set('Asia/Manila');
 
 $loginPage = 'login.php';
@@ -62,16 +59,20 @@ if ($roomId === false || $roomId === null) {
     stopWithMessage(400, 'Invalid room', 'The selected room is missing or invalid.');
 }
 
-$sql = "SELECT r.room_id, r.room_number, r.min_capacity, r.max_capacity,
-               l.library_id, l.library_name
-        FROM rooms r
-        INNER JOIN libraries l ON l.library_id = r.library_id
-        WHERE r.room_id = ?";
-$stmt = $conn->prepare($sql);
-$stmt->bind_param('i', $roomId);
-$stmt->execute();
-$room = $stmt->get_result()->fetch_assoc();
-$stmt->close();
+try {
+    $stmt = $pdo->prepare(
+        "SELECT r.room_id, r.room_number, r.min_capacity, r.max_capacity,
+                l.library_id, l.library_name
+         FROM rooms r
+         INNER JOIN libraries l ON l.library_id = r.library_id
+         WHERE r.room_id = ?"
+    );
+    $stmt->execute([$roomId]);
+    $room = $stmt->fetch();
+} catch (PDOException $e) {
+    error_log('booking.php DB error: ' . $e->getMessage());
+    stopWithMessage(500, 'Database error', 'The room details could not be loaded. Please try again later.');
+}
 
 if (!$room) {
     stopWithMessage(404, 'Room not found', 'The selected room does not exist.');
