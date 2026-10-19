@@ -1,20 +1,14 @@
 <?php
-require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/dbconn.php';
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-$libraries = [];
-
 $sql = "SELECT library_id, library_name FROM libraries ORDER BY library_name ASC";
-$result = mysqli_query($conn, $sql);
-
-if ($result && mysqli_num_rows($result) > 0) {
-    while ($row = mysqli_fetch_assoc($result)) {
-        $libraries[] = $row;
-    }
-}
+$stmt = $pdo->prepare($sql);
+$stmt->execute();
+$libraries = $stmt->fetchAll();
 ?>
 <!DOCTYPE html>
 <html lang="en">
