@@ -14,12 +14,38 @@ function e($value)
 function stop_page($message, $code = 403)
 {
     http_response_code($code);
-    echo '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
-        . '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        . '<title>Equipment</title>'
-        . '<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">'
-        . '</head><body><div class="container mt-5"><div class="alert alert-danger">'
-        . e($message) . '</div><a class="btn btn-outline-secondary" href="dashboard.php">Dashboard</a></div></body></html>';
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Equipment - University of Baguio</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link rel="stylesheet" href="style.css">
+    </head>
+    <body>
+        <main class="ub-auth-page">
+            <div class="ub-auth-card">
+                <div class="ub-auth-header">
+                    <div class="ub-sidebar-university">UNIVERSITY OF</div>
+                    <div class="ub-brand">BAGUIO</div>
+                    <p>STUDY ROOM BOOKING</p>
+                    <h1>Unable to Continue</h1>
+                </div>
+
+                <div class="alert alert-danger">
+                    <?= e($message) ?>
+                </div>
+
+                <a href="dashboard.php" class="btn-ub w-100">
+                    Return to Dashboard
+                </a>
+            </div>
+        </main>
+    </body>
+    </html>
+    <?php
     exit;
 }
 
@@ -31,12 +57,13 @@ if (empty($_SESSION['user_id']) || empty($_SESSION['role'])) {
 
 $userId = (string) $_SESSION['user_id'];
 $role = strtolower((string) $_SESSION['role']);
-$fullName = $_SESSION['full_name'] ?? '';
+$fullName = $_SESSION['full_name'] ?? 'User';
 
 if ($role !== 'student' && $role !== 'employee') {
     stop_page('Only students and employees can manage equipment.');
 }
 
+// Validate booking ID.
 $bookingId = filter_input(INPUT_GET, 'booking_id', FILTER_VALIDATE_INT, [
     'options' => ['min_range' => 1]
 ]);
@@ -45,7 +72,7 @@ if (!$bookingId) {
     stop_page('Invalid or missing booking ID.', 400);
 }
 
-// Retrieve the booking, its library, and verify ownership.
+// Retrieve booking details, library, and verify ownership.
 $stmt = $pdo->prepare(
     'SELECT b.booking_id, b.student_id, b.employee_id, b.topic_purpose,
             b.booking_date, b.start_time, b.end_time, r.library_id,
@@ -63,7 +90,9 @@ if (!$booking) {
     stop_page('Booking not found.', 404);
 }
 
-$ownerValue = ($role === 'student') ? $booking['student_id'] : $booking['employee_id'];
+$ownerValue = ($role === 'student')
+    ? $booking['student_id']
+    : $booking['employee_id'];
 
 if ($ownerValue === null || (string) $ownerValue !== $userId) {
     stop_page('You are not allowed to manage equipment for this booking.');
@@ -90,7 +119,9 @@ $errors = [];
 $maxQty = 100;
 $posted = [];
 
+// Process equipment selections.
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
     $selected = $_POST['selected'] ?? [];
     $quantities = $_POST['quantity'] ?? [];
 
@@ -105,6 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $toSave = [];
 
     foreach ($selected as $idRaw) {
+
         $id = filter_var($idRaw, FILTER_VALIDATE_INT, [
             'options' => ['min_range' => 1]
         ]);
@@ -118,11 +150,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $posted[$id] = $qtyRaw;
 
         $qty = filter_var($qtyRaw, FILTER_VALIDATE_INT, [
-            'options' => ['min_range' => 1, 'max_range' => $maxQty]
+            'options' => [
+                'min_range' => 1,
+                'max_range' => $maxQty
+            ]
         ]);
 
         if (!$qty) {
-            $errors[] = 'Quantity for equipment #' . (int) $id . ' must be a whole number from 1 to ' . $maxQty . '.';
+            $errors[] = 'Quantity for equipment #' . (int) $id .
+                ' must be a whole number from 1 to ' . $maxQty . '.';
             continue;
         }
 
@@ -134,17 +170,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (!$errors) {
+
         try {
             $pdo->beginTransaction();
 
-            // Insert selected items or update their quantities if already saved.
+            // Insert selected items or update existing quantities.
             $stmt = $pdo->prepare(
-                'INSERT INTO booking_equipment (booking_id, equipment_id, quantity)
-                 VALUES (:booking_id, :equipment_id, :quantity)
+                'INSERT INTO booking_equipment
+                    (booking_id, equipment_id, quantity)
+                 VALUES
+                    (:booking_id, :equipment_id, :quantity)
                  ON DUPLICATE KEY UPDATE quantity = :quantity_update'
             );
 
             foreach ($toSave as $equipmentId => $quantity) {
+
                 $stmt->execute([
                     ':booking_id' => $bookingId,
                     ':equipment_id' => $equipmentId,
@@ -155,11 +195,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $pdo->commit();
 
-            // Return to the dashboard after saving.
+            // Return to dashboard after saving.
             header('Location: dashboard.php?message=equipment_saved');
             exit;
 
         } catch (PDOException $ex) {
+
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
             }
@@ -196,146 +237,341 @@ foreach ($stmt->fetchAll() as $row) {
 
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Booking Equipment</title>
+
+    <title>Booking Equipment - University of Baguio</title>
+
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
 </head>
 
-<body class="bg-light">
+<body>
 
-<div class="container my-4">
+<div class="ub-layout">
 
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-        <h1 class="h3 mb-0">
-            Equipment for Booking #<?php echo (int) $booking['booking_id']; ?>
-        </h1>
+    <!-- SIDEBAR -->
 
-        <a href="dashboard.php" class="btn btn-outline-secondary">Dashboard</a>
-    </div>
+    <aside class="ub-sidebar">
 
-    <p class="text-muted mb-1">
-        Logged in as: <?php echo e($fullName); ?> (<?php echo e($role); ?>)
-    </p>
+        <div class="ub-sidebar-header">
 
-    <p class="mb-3">
-        <strong>Library:</strong> <?php echo e($booking['library_name']); ?><br>
-        <strong>Purpose:</strong> <?php echo e($booking['topic_purpose']); ?><br>
-        <strong>Date:</strong> <?php echo e($booking['booking_date']); ?>,
-        <?php echo e($booking['start_time']); ?> - <?php echo e($booking['end_time']); ?>
-    </p>
+            <div class="ub-sidebar-university">UNIVERSITY OF</div>
 
-    <?php if ($errors): ?>
-        <div class="alert alert-danger">
-            <ul class="mb-0">
-                <?php foreach (array_unique($errors) as $error): ?>
-                    <li><?php echo e($error); ?></li>
-                <?php endforeach; ?>
-            </ul>
-        </div>
-    <?php endif; ?>
+            <div class="ub-brand">BAGUIO</div>
 
-    <?php if (!$equipmentList): ?>
+            <div class="ub-brand-subtitle">
+                STUDY ROOM BOOKING
+            </div>
 
-        <div class="alert alert-info">
-            No equipment is available for this library right now.
         </div>
 
-    <?php else: ?>
+        <div class="ub-user-profile">
+            <strong><?= e($fullName) ?></strong>
+            <small><?= e(ucfirst($role)) ?> Account</small>
+        </div>
 
-        <div class="card shadow-sm">
-            <div class="card-body">
+        <nav>
 
-                <h2 class="h5 mb-3">
-                    Available Equipment
-                </h2>
+            <a href="dashboard.php">
+                <span>▣</span> Dashboard
+            </a>
 
-                <form method="post" action="equipment.php?booking_id=<?php echo (int) $bookingId; ?>">
+            <a href="libraries.php">
+                <span>▦</span> Browse Libraries
+            </a>
 
-                    <div class="table-responsive">
+            <a href="dashboard.php#my-bookings">
+                <span>▤</span> My Bookings
+            </a>
 
-                        <table class="table table-bordered align-middle">
+        </nav>
 
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width: 90px;">Select</th>
-                                    <th>Equipment</th>
-                                    <th style="width: 180px;">Quantity</th>
-                                </tr>
-                            </thead>
+        <div class="ub-sidebar-bottom">
+            <nav>
+                <a href="logout.php">
+                    <span>↪</span> Logout
+                </a>
+            </nav>
+        </div>
 
-                            <tbody>
+    </aside>
 
-                                <?php foreach ($equipmentList as $equipment): ?>
+    <!-- MAIN CONTENT -->
 
-                                    <?php
-                                    $id = (int) $equipment['equipment_id'];
+    <main class="ub-main">
 
-                                    $isChecked = ($_SERVER['REQUEST_METHOD'] === 'POST')
-                                        ? isset($posted[$id])
-                                        : isset($saved[$id]);
+        <div class="ub-content">
 
-                                    $qtyValue = $posted[$id] ?? ($saved[$id] ?? 1);
-                                    ?>
+            <!-- PAGE HEADING -->
 
-                                    <tr>
-                                        <td class="text-center">
-                                            <input
-                                                type="checkbox"
-                                                class="form-check-input"
-                                                name="selected[]"
-                                                value="<?php echo $id; ?>"
-                                                id="eq<?php echo $id; ?>"
-                                                <?php echo $isChecked ? 'checked' : ''; ?>
-                                            >
-                                        </td>
+            <div class="ub-content-header">
 
-                                        <td>
-                                            <label for="eq<?php echo $id; ?>" class="mb-0">
-                                                <?php echo e($equipment['equipment_name']); ?>
-                                            </label>
-                                        </td>
+                <div>
+                    <h1 class="ub-page-title">Booking Equipment</h1>
 
-                                        <td>
-                                            <input
-                                                type="number"
-                                                class="form-control"
-                                                name="quantity[<?php echo $id; ?>]"
-                                                min="1"
-                                                max="<?php echo $maxQty; ?>"
-                                                step="1"
-                                                value="<?php echo e($qtyValue); ?>"
-                                                aria-label="Quantity for <?php echo e($equipment['equipment_name']); ?>"
-                                            >
-                                        </td>
-                                    </tr>
+                    <p class="ub-page-subtitle">
+                        Select the equipment you need for your discussion room booking.
+                    </p>
+                </div>
 
-                                <?php endforeach; ?>
+                <span class="ub-role-label">
+                    <?= e(ucfirst($role)) ?> Account
+                </span>
 
-                            </tbody>
+            </div>
 
-                        </table>
+            <!-- WELCOME BANNER -->
+
+            <div class="ub-banner">
+
+                <h2>Select Your Equipment</h2>
+
+                <p>
+                    Choose the available equipment and specify the quantity needed for your booking.
+                </p>
+
+            </div>
+
+            <!-- BOOKING SUMMARY -->
+
+            <section class="ub-card ub-equipment-summary">
+
+                <div class="ub-equipment-card-header">
+                    Booking #<?= (int) $booking['booking_id'] ?> Summary
+                </div>
+
+                <div class="ub-equipment-card-body">
+
+                    <div class="row g-3">
+
+                        <div class="col-md-6">
+
+                            <div class="ub-equipment-summary-item">
+                                <small>LIBRARY</small>
+                                <strong>
+                                    <?= e($booking['library_name']) ?>
+                                </strong>
+                            </div>
+
+                        </div>
+
+                        <div class="col-md-6">
+
+                            <div class="ub-equipment-summary-item">
+                                <small>BOOKING PURPOSE</small>
+                                <strong>
+                                    <?= e($booking['topic_purpose']) ?>
+                                </strong>
+                            </div>
+
+                        </div>
+
+                        <div class="col-md-6">
+
+                            <div class="ub-equipment-summary-item">
+                                <small>BOOKING DATE</small>
+                                <strong>
+                                    <?= e($booking['booking_date']) ?>
+                                </strong>
+                            </div>
+
+                        </div>
+
+                        <div class="col-md-6">
+
+                            <div class="ub-equipment-summary-item">
+                                <small>BOOKING TIME</small>
+                                <strong>
+                                    <?= e($booking['start_time']) ?> -
+                                    <?= e($booking['end_time']) ?>
+                                </strong>
+                            </div>
+
+                        </div>
 
                     </div>
 
-                    <button type="submit" class="btn btn-primary">
-                        Save Equipment and Return to Dashboard
-                    </button>
+                </div>
 
-                    <a
-                        href="participants.php?booking_id=<?php echo (int) $bookingId; ?>"
-                        class="btn btn-outline-secondary ms-2"
-                    >
-                        Back to Participants
-                    </a>
+            </section>
 
-                </form>
+            <!-- VALIDATION ERRORS -->
 
-            </div>
+            <?php if ($errors): ?>
+
+                <div class="alert alert-danger" role="alert">
+
+                    <strong>Please check the following:</strong>
+
+                    <ul class="mb-0 mt-2">
+                        <?php foreach (array_unique($errors) as $error): ?>
+                            <li><?= e($error) ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+
+                </div>
+
+            <?php endif; ?>
+
+            <!-- EQUIPMENT SELECTION -->
+
+            <section class="ub-card ub-equipment-card">
+
+                <div class="ub-equipment-card-header">
+                    Available Equipment
+                </div>
+
+                <div class="ub-equipment-card-body">
+
+                    <?php if (!$equipmentList): ?>
+
+                        <div class="ub-empty-state bg-light rounded">
+
+                            <h5>No Equipment Available</h5>
+
+                            <p class="mb-0">
+                                No equipment is currently listed for this library.
+                            </p>
+
+                        </div>
+
+                    <?php else: ?>
+
+                        <h2 class="ub-section-title">
+                            Select Equipment
+                        </h2>
+
+                        <p class="ub-form-help mb-3">
+                            Choose at least one equipment item. Enter a quantity
+                            from 1 to <?= $maxQty ?> for each selected item.
+                        </p>
+
+                        <form
+                            method="post"
+                            action="equipment.php?booking_id=<?= (int) $bookingId ?>"
+                        >
+
+                            <div class="table-responsive">
+
+                                <table class="table table-bordered table-hover ub-equipment-table">
+
+                                    <thead>
+                                        <tr>
+                                            <th class="text-center ub-equipment-select-column">
+                                                Select
+                                            </th>
+
+                                            <th>
+                                                Equipment Name
+                                            </th>
+
+                                            <th class="ub-equipment-quantity-column">
+                                                Quantity
+                                            </th>
+                                        </tr>
+                                    </thead>
+
+                                    <tbody>
+
+                                        <?php foreach ($equipmentList as $equipment): ?>
+
+                                            <?php
+                                            $id = (int) $equipment['equipment_id'];
+
+                                            $isChecked = ($_SERVER['REQUEST_METHOD'] === 'POST')
+                                                ? isset($posted[$id])
+                                                : isset($saved[$id]);
+
+                                            $qtyValue = $posted[$id] ?? ($saved[$id] ?? 1);
+                                            ?>
+
+                                            <tr>
+
+                                                <td class="text-center">
+
+                                                    <input
+                                                        type="checkbox"
+                                                        class="form-check-input equipment-checkbox"
+                                                        name="selected[]"
+                                                        value="<?= $id ?>"
+                                                        id="eq<?= $id ?>"
+                                                        <?= $isChecked ? 'checked' : '' ?>
+                                                    >
+
+                                                </td>
+
+                                                <td>
+
+                                                    <label for="eq<?= $id ?>" class="ub-equipment-name">
+                                                        <?= e($equipment['equipment_name']) ?>
+                                                    </label>
+
+                                                    <div class="ub-equipment-description">
+                                                        Available in <?= e($booking['library_name']) ?>
+                                                    </div>
+
+                                                </td>
+
+                                                <td>
+
+                                                    <input
+                                                        type="number"
+                                                        class="form-control ub-quantity-input"
+                                                        name="quantity[<?= $id ?>]"
+                                                        min="1"
+                                                        max="<?= $maxQty ?>"
+                                                        step="1"
+                                                        value="<?= e($qtyValue) ?>"
+                                                        aria-label="Quantity for <?= e($equipment['equipment_name']) ?>"
+                                                    >
+
+                                                </td>
+
+                                            </tr>
+
+                                        <?php endforeach; ?>
+
+                                    </tbody>
+
+                                </table>
+
+                            </div>
+
+                            <div class="ub-form-actions">
+
+                                <button type="submit" class="btn-ub">
+                                    Save Equipment and Return to Dashboard →
+                                </button>
+
+                                <a
+                                    href="participants.php?booking_id=<?= (int) $bookingId ?>"
+                                    class="btn-ub-outline"
+                                >
+                                    Back to Participants
+                                </a>
+
+                            </div>
+
+                        </form>
+
+                    <?php endif; ?>
+
+                </div>
+
+            </section>
+
+            <footer class="ub-footer">
+                © 2026 University of Baguio. All rights reserved.
+                <br>
+                Study Room Booking System
+            </footer>
+
         </div>
 
-    <?php endif; ?>
+    </main>
 
 </div>
 

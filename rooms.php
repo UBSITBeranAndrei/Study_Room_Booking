@@ -1,3 +1,4 @@
+
 <?php
 require_once __DIR__ . '/dbconn.php';
 
@@ -5,16 +6,28 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Only logged-in users can view and book rooms.
+// Check login.
 if (empty($_SESSION['user_id']) || empty($_SESSION['role'])) {
     header('Location: login.php');
     exit;
 }
 
+// Check user role.
+$role = strtolower((string) $_SESSION['role']);
+
+if (!in_array($role, ['student', 'employee', 'administrator'], true)) {
+    header('Location: login.php');
+    exit;
+}
+
+$userName = $_SESSION['full_name'] ?? $_SESSION['name'] ?? 'User';
+
+// Initialize variables.
 $library = null;
 $rooms = [];
 $errorMessage = '';
 
+// Get library ID from URL.
 $libraryId = filter_input(
     INPUT_GET,
     'library_id',
@@ -22,92 +35,435 @@ $libraryId = filter_input(
     ['options' => ['min_range' => 1]]
 );
 
+// Validate library ID.
 if ($libraryId === false || $libraryId === null) {
+
     $errorMessage = 'Invalid or missing library ID.';
+
 } else {
-    $librarySql = 'SELECT library_id, library_name
+
+    // Get selected library.
+    $librarySql = "SELECT library_id, library_name
                    FROM libraries
-                   WHERE library_id = :library_id';
+                   WHERE library_id = :library_id";
+
     $libraryStmt = $pdo->prepare($librarySql);
     $libraryStmt->execute([':library_id' => $libraryId]);
+
     $library = $libraryStmt->fetch();
 
     if (!$library) {
+
         $errorMessage = 'Library not found.';
+
     } else {
-        $roomSql = 'SELECT room_id, room_number, min_capacity, max_capacity
+
+        // Get rooms under the selected library.
+        $roomSql = "SELECT room_id, room_number, min_capacity, max_capacity
                     FROM rooms
                     WHERE library_id = :library_id
-                    ORDER BY room_number ASC';
+                    ORDER BY room_number ASC";
+
         $roomStmt = $pdo->prepare($roomSql);
         $roomStmt->execute([':library_id' => $libraryId]);
+
         $rooms = $roomStmt->fetchAll();
     }
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Available Rooms - Library Room Booking</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <title>Available Rooms | University of Baguio</title>
+
+    <!-- Bootstrap -->
+    <link
+        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+        rel="stylesheet"
+    >
+
+    <!-- Centralized Stylesheet -->
+    <link rel="stylesheet" href="style.css">
+
 </head>
-<body class="bg-light">
-<div class="container py-4">
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
-        <h1 class="h3 mb-0">Available Discussion Rooms</h1>
-        <div class="d-flex flex-wrap gap-2">
-            <a href="dashboard.php" class="btn btn-outline-secondary">Dashboard</a>
-            <a href="libraries.php" class="btn btn-outline-primary">Back to Libraries</a>
-        </div>
-    </div>
 
-    <?php if ($errorMessage !== ''): ?>
-        <div class="alert alert-danger">
-            <?php echo htmlspecialchars($errorMessage, ENT_QUOTES, 'UTF-8'); ?>
-        </div>
-    <?php else: ?>
-        <div class="card shadow-sm mb-4">
-            <div class="card-body">
-                <h2 class="h4 mb-2"><?php echo htmlspecialchars($library['library_name'], ENT_QUOTES, 'UTF-8'); ?></h2>
-                <p class="text-muted mb-0">Select a room below to make a booking.</p>
+<body>
+
+<div class="ub-layout">
+
+    <!-- SIDEBAR -->
+
+    <aside class="ub-sidebar">
+
+        <div class="ub-sidebar-header">
+
+            <small class="ub-sidebar-university">
+                UNIVERSITY OF
+            </small>
+
+            <div class="ub-brand">
+                BAGUIO
             </div>
+
+            <div class="ub-brand-subtitle">
+                STUDY ROOM BOOKING
+            </div>
+
         </div>
 
-        <?php if (count($rooms) === 0): ?>
-            <div class="alert alert-info">No rooms are currently listed for this library.</div>
-        <?php else: ?>
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-bordered table-hover align-middle mb-0">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Room Number</th>
-                                    <th>Minimum Capacity</th>
-                                    <th>Maximum Capacity</th>
-                                    <th>Action</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($rooms as $room): ?>
-                                    <tr>
-                                        <td><?php echo htmlspecialchars($room['room_number'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                        <td><?php echo (int) $room['min_capacity']; ?> people</td>
-                                        <td><?php echo (int) $room['max_capacity']; ?> people</td>
-                                        <td>
-                                            <a href="booking.php?room_id=<?php echo (int) $room['room_id']; ?>" class="btn btn-primary btn-sm">Book This Room</a>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
+
+        <!-- USER PROFILE -->
+
+        <div class="ub-user-profile">
+
+            <strong>
+                <?php
+                echo htmlspecialchars(
+                    $userName,
+                    ENT_QUOTES,
+                    'UTF-8'
+                );
+                ?>
+            </strong>
+
+            <small>
+                <?php
+                echo htmlspecialchars(
+                    ucfirst($role),
+                    ENT_QUOTES,
+                    'UTF-8'
+                );
+                ?>
+                Account
+            </small>
+
+        </div>
+
+
+        <!-- NAVIGATION -->
+
+        <nav>
+
+            <a href="dashboard.php">
+                <span>▣</span>
+                Dashboard
+            </a>
+
+
+            <?php if ($role === 'student' || $role === 'employee'): ?>
+
+                <a href="libraries.php" class="active">
+                    <span>▦</span>
+                    Browse Libraries
+                </a>
+
+                <a href="dashboard.php#my-bookings">
+                    <span>☷</span>
+                    My Bookings
+                </a>
+
+            <?php else: ?>
+
+                <a href="admin.php">
+                    <span>☷</span>
+                    Manage Bookings
+                </a>
+
+                <a href="libraries.php" class="active">
+                    <span>▦</span>
+                    Browse Libraries
+                </a>
+
+            <?php endif; ?>
+
+        </nav>
+
+
+        <!-- SIDEBAR FOOTER -->
+
+        <div class="ub-sidebar-bottom">
+
+            <a href="logout.php" class="ub-nav-link">
+                <span>⇥</span>
+                Logout
+            </a>
+
+        </div>
+
+    </aside>
+
+
+    <!-- MAIN CONTENT -->
+
+    <main class="ub-main">
+
+        <div class="ub-content">
+
+
+            <!-- PAGE HEADER -->
+
+            <div class="ub-rooms-page-header">
+
+                <div>
+
+                    <h1 class="ub-page-title">
+                        Available Discussion Rooms
+                    </h1>
+
+                    <p class="ub-page-subtitle">
+                        Explore the discussion rooms in your selected
+                        University of Baguio library.
+                    </p>
+
                 </div>
+
+                <span class="ub-role-label">
+                    <?php
+                    echo htmlspecialchars(
+                        ucfirst($role),
+                        ENT_QUOTES,
+                        'UTF-8'
+                    );
+                    ?>
+                </span>
+
             </div>
-        <?php endif; ?>
-    <?php endif; ?>
+
+
+            <?php if ($errorMessage !== ''): ?>
+
+
+                <!-- ERROR MESSAGE -->
+
+                <div class="alert alert-danger" role="alert">
+
+                    <?php
+                    echo htmlspecialchars(
+                        $errorMessage,
+                        ENT_QUOTES,
+                        'UTF-8'
+                    );
+                    ?>
+
+                </div>
+
+                <a href="libraries.php" class="ub-room-back">
+                    ← Back to Libraries
+                </a>
+
+
+            <?php else: ?>
+
+
+                <!-- SELECTED LIBRARY BANNER -->
+
+                <section class="ub-rooms-banner">
+
+                    <h2>
+                        <?php
+                        echo htmlspecialchars(
+                            $library['library_name'],
+                            ENT_QUOTES,
+                            'UTF-8'
+                        );
+                        ?>
+                    </h2>
+
+                    <p>
+                        Select a discussion room below to view its
+                        capacity and continue with your booking.
+                    </p>
+
+                </section>
+
+
+                <!-- ROOM SECTION HEADER -->
+
+                <div class="ub-rooms-section-header">
+
+                    <h2>
+                        Available Rooms
+                    </h2>
+
+                    <span>
+                        <?php echo count($rooms); ?>
+
+                        <?php echo count($rooms) === 1 ? 'room' : 'rooms'; ?>
+                        found
+                    </span>
+
+                </div>
+
+
+                <?php if (empty($rooms)): ?>
+
+
+                    <!-- EMPTY STATE -->
+
+                    <div class="ub-room-empty">
+
+                        <h3>
+                            No Rooms Available
+                        </h3>
+
+                        <p>
+                            There are currently no rooms listed for this library.
+                        </p>
+
+                    </div>
+
+
+                <?php else: ?>
+
+
+                    <!-- ROOM CARDS -->
+
+                    <div class="ub-room-grid">
+
+                        <?php foreach ($rooms as $room): ?>
+
+                            <article class="ub-room-card">
+
+
+                                <!-- CARD HEADER -->
+
+                                <div class="ub-room-card-header">
+
+                                    <span class="ub-room-icon">
+                                        ▤
+                                    </span>
+
+                                </div>
+
+
+                                <!-- CARD BODY -->
+
+                                <div class="ub-room-card-body">
+
+                                    <div class="ub-room-label">
+                                        DISCUSSION ROOM
+                                    </div>
+
+                                    <h3 class="ub-room-name">
+
+                                        <?php
+                                        echo htmlspecialchars(
+                                            $room['room_number'],
+                                            ENT_QUOTES,
+                                            'UTF-8'
+                                        );
+                                        ?>
+
+                                    </h3>
+
+                                    <p class="ub-room-description">
+                                        Study and collaborate with your
+                                        group in this discussion room.
+                                    </p>
+
+
+                                    <!-- ROOM CAPACITY -->
+
+                                    <div class="ub-room-capacity">
+
+                                        <div class="ub-room-capacity-item">
+
+                                            <span>
+                                                Minimum Capacity
+                                            </span>
+
+                                            <strong>
+                                                <?php
+                                                echo (int) $room['min_capacity'];
+                                                ?>
+                                                people
+                                            </strong>
+
+                                        </div>
+
+
+                                        <div class="ub-room-capacity-item">
+
+                                            <span>
+                                                Maximum Capacity
+                                            </span>
+
+                                            <strong>
+                                                <?php
+                                                echo (int) $room['max_capacity'];
+                                                ?>
+                                                people
+                                            </strong>
+
+                                        </div>
+
+                                    </div>
+
+
+                                    <!-- BOOKING BUTTON -->
+
+                                    <?php if ($role === 'student' || $role === 'employee'): ?>
+
+                                        <a
+                                            href="booking.php?room_id=<?php echo (int) $room['room_id']; ?>"
+                                            class="btn-ub ub-room-book-button"
+                                        >
+                                            Book This Room →
+                                        </a>
+
+                                    <?php else: ?>
+
+                                        <div class="ub-room-admin-note">
+                                            Room information only
+                                        </div>
+
+                                    <?php endif; ?>
+
+                                </div>
+
+                            </article>
+
+                        <?php endforeach; ?>
+
+                    </div>
+
+                <?php endif; ?>
+
+
+                <!-- BACK BUTTON -->
+
+                <a href="libraries.php" class="ub-room-back">
+                    ← Back to Libraries
+                </a>
+
+
+            <?php endif; ?>
+
+
+            <!-- FOOTER -->
+
+            <footer class="ub-footer">
+
+                © <?php echo date('Y'); ?> University of Baguio.
+                All rights reserved.
+
+                <br>
+
+                Study Room Booking System
+
+            </footer>
+
+        </div>
+
+    </main>
+
 </div>
+
 </body>
 </html>
