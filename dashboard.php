@@ -2,6 +2,7 @@
 session_start();
 require_once __DIR__ . '/dbconn.php';
 
+// Check login.
 if (!isset($_SESSION['user_id']) || !isset($_SESSION['role'])) {
     header('Location: login.php');
     exit;
@@ -11,15 +12,22 @@ $userId = (int) $_SESSION['user_id'];
 $role = strtolower((string) $_SESSION['role']);
 $fullName = $_SESSION['full_name'] ?? 'User';
 
+// Allow only valid account types.
 if (!in_array($role, ['student', 'employee', 'administrator'], true)) {
     header('Location: logout.php');
     exit;
 }
 
-$bookings = [];
+function h($value): string
+{
+    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+}
 
+$bookings = [];
+$pendingCount = 0;
+
+// Get personal bookings for students and employees.
 if ($role === 'student' || $role === 'employee') {
-    // Role is checked against a whitelist above, so this column is not user-supplied.
     $ownerColumn = ($role === 'student') ? 'b.student_id' : 'b.employee_id';
 
     $sql = "SELECT b.booking_id, b.topic_purpose, b.booking_date,
@@ -36,6 +44,13 @@ if ($role === 'student' || $role === 'employee') {
     $bookings = $stmt->fetchAll();
 }
 
+// Get pending application count for administrators.
+if ($role === 'administrator') {
+    $stmt = $pdo->query("SELECT COUNT(*) FROM bookings WHERE status = 'pending'");
+    $pendingCount = (int) $stmt->fetchColumn();
+}
+
+// Booking status labels and styles.
 $statusLabels = [
     'pending' => 'Pending approval',
     'approved' => 'Approved',
@@ -45,104 +60,230 @@ $statusLabels = [
 ];
 
 $statusClasses = [
-    'pending' => 'warning text-dark',
-    'approved' => 'success',
-    'rejected' => 'danger',
-    'cancelled' => 'secondary',
-    'completed' => 'primary'
+    'pending' => 'status-pending',
+    'approved' => 'status-approved',
+    'rejected' => 'status-rejected',
+    'cancelled' => 'status-cancelled',
+    'completed' => 'status-completed'
 ];
 
+// Success message after equipment submission.
 $message = '';
 if (isset($_GET['message']) && $_GET['message'] === 'equipment_saved') {
     $message = 'Equipment saved successfully. Check your booking status below.';
 }
+
+$roleLabel = ucfirst($role);
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Dashboard - Library Room Booking</title>
+    <title>Dashboard | University of Baguio Room Booking</title>
+
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
 </head>
-<body class="bg-light">
-<div class="container py-5">
-    <div class="mb-4">
-        <h1 class="h2">Library Discussion Room Booking</h1>
-        <p class="text-muted">
-            Welcome, <strong><?php echo htmlspecialchars($fullName, ENT_QUOTES, 'UTF-8'); ?></strong>!
-            You are logged in as
-            <strong><?php echo htmlspecialchars(ucfirst($role), ENT_QUOTES, 'UTF-8'); ?></strong>.
-        </p>
-    </div>
+<body>
 
-    <?php if ($message !== ''): ?>
-        <div class="alert alert-success">
-            <?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?>
+<div class="ub-layout">
+
+    <!-- SHARED SIDEBAR -->
+    <aside class="ub-sidebar">
+
+        <div class="ub-sidebar-header">
+            <small class="ub-sidebar-university">UNIVERSITY OF</small>
+            <div class="ub-brand">BAGUIO</div>
+            <div class="ub-brand-subtitle">STUDY ROOM BOOKING</div>
         </div>
-    <?php endif; ?>
 
-    <div class="card shadow-sm mb-4">
-        <div class="card-body p-4">
-            <h2 class="h4">Dashboard</h2>
-            <p>Choose an action below to continue.</p>
-            <a href="libraries.php" class="btn btn-primary me-2 mb-2">Browse Libraries</a>
+        <div class="ub-user-profile">
+            <strong><?= h($fullName) ?></strong>
+            <small><?= h($roleLabel) ?> Account</small>
+        </div>
 
-            <?php if ($role === 'administrator'): ?>
-                <a href="admin.php" class="btn btn-success me-2 mb-2">Manage Bookings</a>
+        <nav>
+            <a href="dashboard.php" class="active">
+                <span>▣</span>
+                Dashboard
+            </a>
+
+            <?php if ($role === 'student' || $role === 'employee'): ?>
+                <a href="libraries.php">
+                    <span>▦</span>
+                    Browse Libraries
+                </a>
+
+                <a href="#my-bookings">
+                    <span>☷</span>
+                    My Bookings
+                </a>
             <?php endif; ?>
 
-            <a href="logout.php" class="btn btn-outline-secondary mb-2">Logout</a>
-        </div>
-    </div>
+            <?php if ($role === 'administrator'): ?>
+                <a href="admin.php">
+                    <span>☷</span>
+                    Manage Bookings
+                </a>
+            <?php endif; ?>
+        </nav>
 
-    <?php if ($role === 'student' || $role === 'employee'): ?>
-        <div class="card shadow-sm">
-            <div class="card-header bg-white py-3">
-                <h2 class="h5 mb-0">My Bookings</h2>
-            </div>
-            <div class="card-body">
-                <?php if (count($bookings) === 0): ?>
-                    <p class="text-muted mb-0">You have not made any bookings yet.</p>
-                <?php else: ?>
-                    <div class="table-responsive">
-                        <table class="table table-bordered table-hover align-middle">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Booking ID</th>
-                                    <th>Library</th>
-                                    <th>Room</th>
-                                    <th>Date</th>
-                                    <th>Time</th>
-                                    <th>Purpose</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($bookings as $booking): ?>
-                                    <?php
-                                    $status = (string) $booking['status'];
-                                    $statusLabel = $statusLabels[$status] ?? ucfirst($status);
-                                    $statusClass = $statusClasses[$status] ?? 'secondary';
-                                    ?>
-                                    <tr>
-                                        <td><?php echo (int) $booking['booking_id']; ?></td>
-                                        <td><?php echo htmlspecialchars($booking['library_name'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                        <td><?php echo htmlspecialchars($booking['room_number'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                        <td><?php echo htmlspecialchars($booking['booking_date'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                        <td><?php echo htmlspecialchars(substr($booking['start_time'], 0, 5), ENT_QUOTES, 'UTF-8'); ?> - <?php echo htmlspecialchars(substr($booking['end_time'], 0, 5), ENT_QUOTES, 'UTF-8'); ?></td>
-                                        <td><?php echo htmlspecialchars($booking['topic_purpose'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                        <td><span class="badge bg-<?php echo $statusClass; ?>"><?php echo htmlspecialchars($statusLabel, ENT_QUOTES, 'UTF-8'); ?></span></td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                    <p class="text-muted small mb-0">Pending approval means your booking is waiting for an administrator to review it.</p>
-                <?php endif; ?>
-            </div>
+        <div class="ub-sidebar-bottom">
+            <a href="logout.php" class="ub-nav-link">
+                <span>↪</span>
+                Logout
+            </a>
         </div>
-    <?php endif; ?>
+
+    </aside>
+
+    <!-- MAIN DASHBOARD -->
+    <main class="ub-main">
+        <div class="ub-content">
+
+            <!-- PAGE HEADER -->
+            <div class="ub-dashboard-topbar">
+                <div>
+                    <h1 class="ub-page-title">Dashboard</h1>
+                    <p class="ub-page-subtitle">University of Baguio Study Room Booking System</p>
+                </div>
+
+                <span class="ub-role-label"><?= h($roleLabel) ?></span>
+            </div>
+
+            <!-- SUCCESS MESSAGE -->
+            <?php if ($message !== ''): ?>
+                <div class="alert alert-success" role="alert">
+                    <?= h($message) ?>
+                </div>
+            <?php endif; ?>
+
+            <!-- WELCOME BANNER -->
+            <section class="ub-dashboard-banner">
+                <h2>Welcome back, <?= h($fullName) ?>!</h2>
+
+                <?php if ($role === 'administrator'): ?>
+                    <p>Manage room booking applications and monitor reservation requests.</p>
+                <?php else: ?>
+                    <p>Find a discussion room and make your next group study session productive.</p>
+                <?php endif; ?>
+            </section>
+
+            <!-- STUDENT AND EMPLOYEE DASHBOARD -->
+            <?php if ($role === 'student' || $role === 'employee'): ?>
+
+                <h2 class="ub-dashboard-section-title">Quick Actions</h2>
+
+                <div class="ub-dashboard-action-grid">
+
+                    <a href="libraries.php" class="ub-action-card">
+                        <div class="ub-action-icon">▦</div>
+                        <h3>Browse Libraries</h3>
+                        <p>Explore available libraries and discussion rooms.</p>
+                    </a>
+
+                    <a href="#my-bookings" class="ub-action-card">
+                        <div class="ub-action-icon">☷</div>
+                        <h3>My Bookings</h3>
+                        <p>View your booking history and application status.</p>
+                    </a>
+
+                </div>
+
+                <!-- PERSONAL BOOKINGS -->
+                <section class="ub-card ub-dashboard-bookings" id="my-bookings">
+                    <div class="ub-card-header">
+                        <h2 class="ub-card-title">My Bookings</h2>
+                        <span class="text-muted small"><?= count($bookings) ?> booking(s)</span>
+                    </div>
+
+                    <?php if (count($bookings) === 0): ?>
+                        <div class="ub-dashboard-empty">
+                            <div class="ub-dashboard-empty-icon">▦</div>
+                            <h3>No Bookings Yet</h3>
+                            <p>You have not made any room bookings yet.</p>
+                            <a href="libraries.php" class="btn-ub">Browse Libraries</a>
+                        </div>
+                    <?php else: ?>
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Booking ID</th>
+                                        <th>Library</th>
+                                        <th>Room</th>
+                                        <th>Date</th>
+                                        <th>Time</th>
+                                        <th>Purpose</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($bookings as $booking): ?>
+                                        <?php
+                                        $status = (string) $booking['status'];
+                                        $statusLabel = $statusLabels[$status] ?? ucfirst($status);
+                                        $statusClass = $statusClasses[$status] ?? 'status-cancelled';
+                                        ?>
+                                        <tr>
+                                            <td>#<?= (int) $booking['booking_id'] ?></td>
+                                            <td><?= h($booking['library_name']) ?></td>
+                                            <td><?= h($booking['room_number']) ?></td>
+                                            <td><?= h($booking['booking_date']) ?></td>
+                                            <td><?= h(substr($booking['start_time'], 0, 5)) ?> - <?= h(substr($booking['end_time'], 0, 5)) ?></td>
+                                            <td><?= h($booking['topic_purpose']) ?></td>
+                                            <td><span class="status-badge <?= h($statusClass) ?>"><?= h($statusLabel) ?></span></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <p class="text-muted small mt-3 mb-0">
+                            Pending approval means your booking is waiting for an administrator to review it.
+                        </p>
+                    <?php endif; ?>
+                </section>
+
+            <?php endif; ?>
+
+            <!-- ADMINISTRATOR DASHBOARD -->
+            <?php if ($role === 'administrator'): ?>
+
+                <h2 class="ub-dashboard-section-title">Booking Management</h2>
+
+                <div class="ub-dashboard-action-grid">
+
+                    <div class="ub-action-card">
+                        <div class="ub-action-icon">☷</div>
+                        <div class="ub-dashboard-count"><?= $pendingCount ?></div>
+                        <h3>Pending Applications</h3>
+                        <p>Booking requests waiting for administrator review.</p>
+                    </div>
+
+                    <a href="admin.php" class="ub-action-card">
+                        <div class="ub-action-icon">✓</div>
+                        <h3>Manage Bookings</h3>
+                        <p>Review applications and approve or reject requests.</p>
+                        <span class="btn-ub d-inline-flex mt-3">Open Booking Management</span>
+                    </a>
+
+                </div>
+
+            <?php endif; ?>
+
+            <!-- FOOTER -->
+            <footer class="ub-footer">
+                © <?= date('Y') ?> University of Baguio. All rights reserved.<br>
+                Study Room Booking System
+            </footer>
+
+        </div>
+    </main>
+
 </div>
+
 </body>
 </html>
