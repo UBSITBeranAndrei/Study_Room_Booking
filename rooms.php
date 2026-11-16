@@ -410,12 +410,15 @@ if ($libraryId === false || $libraryId === null) {
 
                                     <?php if ($role === 'student' || $role === 'employee'): ?>
 
-                                        <a
-                                            href="booking.php?room_id=<?php echo (int) $room['room_id']; ?>"
+                                        <button
+                                            type="button"
                                             class="btn-ub ub-room-book-button"
+                                            data-bs-toggle="modal"
+                                            data-bs-target="#roomGuidelinesModal"
+                                            data-room-id="<?php echo (int) $room['room_id']; ?>"
                                         >
                                             Book This Room →
-                                        </a>
+                                        </button>
 
                                     <?php else: ?>
 
@@ -446,6 +449,218 @@ if ($libraryId === false || $libraryId === null) {
             <?php endif; ?>
 
 
+            <?php if ($role === 'student' || $role === 'employee'): ?>
+
+                <!-- DISCUSSION ROOM GUIDELINES MODAL -->
+
+                <div
+                    class="modal fade"
+                    id="roomGuidelinesModal"
+                    tabindex="-1"
+                    aria-labelledby="roomGuidelinesModalLabel"
+                    aria-hidden="true"
+                >
+
+                    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+
+                        <div class="modal-content ub-guidelines-modal">
+
+                            <!-- MODAL HEADER -->
+
+                            <div class="modal-header ub-guidelines-modal-header">
+
+                                <div>
+
+                                    <small class="ub-guidelines-eyebrow">
+                                        UNIVERSITY OF BAGUIO · LIBRARY
+                                    </small>
+
+                                    <h2
+                                        class="modal-title"
+                                        id="roomGuidelinesModalLabel"
+                                    >
+                                        Discussion Room Guidelines
+                                    </h2>
+
+                                </div>
+
+                                <button
+                                    type="button"
+                                    class="btn-close btn-close-white"
+                                    data-bs-dismiss="modal"
+                                    aria-label="Close"
+                                ></button>
+
+                            </div>
+
+
+                            <!-- MODAL BODY -->
+
+                            <div class="modal-body ub-guidelines-modal-body">
+
+                                <p class="ub-guidelines-intro">
+                                    Please read and understand the following rules
+                                    before proceeding with your reservation.
+                                </p>
+
+
+                                <ol class="ub-guidelines-list">
+
+                                    <li>
+
+                                        <strong>
+                                            Room Capacity and Duration
+                                        </strong>
+
+                                        <span>
+                                            A minimum of 5 and a maximum of 10
+                                            people may use the Discussion Room
+                                            at a time for one hour. An extension
+                                            is allowed as long as there are no
+                                            other users.
+                                        </span>
+
+                                    </li>
+
+
+                                    <li>
+
+                                        <strong>
+                                            Valid Identification
+                                        </strong>
+
+                                        <span>
+                                            Users must present their valid ID
+                                            cards before entering the
+                                            Discussion Room.
+                                        </span>
+
+                                    </li>
+
+
+                                    <li>
+
+                                        <strong>
+                                            Reservation Policy
+                                        </strong>
+
+                                        <span>
+                                            Reservations are on a first-come,
+                                            first-served basis.
+                                        </span>
+
+                                    </li>
+
+
+                                    <li>
+
+                                        <strong>
+                                            Cleanliness
+                                        </strong>
+
+                                        <span>
+                                            Switch off the lights and maintain
+                                            the cleanliness of the Discussion
+                                            Room after use.
+                                        </span>
+
+                                    </li>
+
+
+                                    <li>
+
+                                        <strong>
+                                            Prohibited Activities
+                                        </strong>
+
+                                        <span>
+                                            Vandalism, smoking, sleeping, and
+                                            eating inside the Discussion Room
+                                            are prohibited.
+                                        </span>
+
+                                    </li>
+
+
+                                    <li>
+
+                                        <strong>
+                                            Borrowed Materials
+                                        </strong>
+
+                                        <span>
+                                            Return all borrowed materials,
+                                            such as whiteboard markers and
+                                            erasers, to the library personnel.
+                                        </span>
+
+                                    </li>
+
+                                </ol>
+
+
+                                <p class="ub-guidelines-thankyou">
+                                    Thank you for patronizing the use of
+                                    our library facilities.
+                                </p>
+
+
+                                <!-- AGREEMENT CHECKBOX -->
+
+                                <div class="form-check ub-guidelines-agreement">
+
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        value="1"
+                                        id="guidelinesAgreement"
+                                    >
+
+                                    <label
+                                        class="form-check-label"
+                                        for="guidelinesAgreement"
+                                    >
+                                        I have read and understood the
+                                        Discussion Room Guidelines.
+                                    </label>
+
+                                </div>
+
+                            </div>
+
+
+                            <!-- MODAL FOOTER -->
+
+                            <div class="modal-footer ub-guidelines-modal-footer">
+
+                                <button
+                                    type="button"
+                                    class="btn btn-outline-secondary"
+                                    data-bs-dismiss="modal"
+                                >
+                                    Cancel
+                                </button>
+
+                                <button
+                                    type="button"
+                                    class="btn-ub"
+                                    id="continueToBooking"
+                                    disabled
+                                >
+                                    Continue to Booking →
+                                </button>
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            <?php endif; ?>
+
+
             <!-- FOOTER -->
 
             <footer class="ub-footer">
@@ -464,6 +679,74 @@ if ($libraryId === false || $libraryId === null) {
     </main>
 
 </div>
+
+
+<!-- BOOTSTRAP JAVASCRIPT -->
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+
+<!-- GUIDELINES MODAL SCRIPT -->
+
+<script>
+
+document.addEventListener('DOMContentLoaded', function () {
+
+    const modal = document.getElementById('roomGuidelinesModal');
+
+    if (!modal) {
+        return;
+    }
+
+    const checkbox = document.getElementById('guidelinesAgreement');
+    const continueButton = document.getElementById('continueToBooking');
+
+    let selectedRoomId = null;
+
+
+    // Get the selected room when the modal opens.
+
+    modal.addEventListener('show.bs.modal', function (event) {
+
+        const trigger = event.relatedTarget;
+
+        selectedRoomId = trigger
+            ? trigger.getAttribute('data-room-id')
+            : null;
+
+        // Reset agreement every time the modal opens.
+
+        checkbox.checked = false;
+        continueButton.disabled = true;
+
+    });
+
+
+    // Enable button only when the user agrees.
+
+    checkbox.addEventListener('change', function () {
+
+        continueButton.disabled = !checkbox.checked;
+
+    });
+
+
+    // Proceed to booking.php.
+
+    continueButton.addEventListener('click', function () {
+
+        if (!checkbox.checked || !selectedRoomId) {
+            return;
+        }
+
+        window.location.href =
+            'booking.php?room_id=' + encodeURIComponent(selectedRoomId);
+
+    });
+
+});
+
+</script>
 
 </body>
 </html>
