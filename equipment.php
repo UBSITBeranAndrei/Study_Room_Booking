@@ -1,3 +1,4 @@
+
 <?php
 require_once __DIR__ . '/dbconn.php';
 
@@ -33,7 +34,7 @@ $role = strtolower((string) $_SESSION['role']);
 $fullName = $_SESSION['full_name'] ?? '';
 
 if ($role !== 'student' && $role !== 'employee') {
-    stop_page('Only students or employees can manage equipment.');
+    stop_page('Only students and employees can manage equipment.');
 }
 
 $bookingId = filter_input(INPUT_GET, 'booking_id', FILTER_VALIDATE_INT, [
@@ -44,13 +45,17 @@ if (!$bookingId) {
     stop_page('Invalid or missing booking ID.', 400);
 }
 
-// Retrieve the booking and verify that it belongs to the logged-in user.
+// Retrieve the booking, its library, and verify ownership.
 $stmt = $pdo->prepare(
-    'SELECT booking_id, student_id, employee_id, topic_purpose,
-            booking_date, start_time, end_time
-     FROM bookings
-     WHERE booking_id = :booking_id'
+    'SELECT b.booking_id, b.student_id, b.employee_id, b.topic_purpose,
+            b.booking_date, b.start_time, b.end_time, r.library_id,
+            l.library_name
+     FROM bookings b
+     INNER JOIN rooms r ON b.room_id = r.room_id
+     INNER JOIN libraries l ON r.library_id = l.library_id
+     WHERE b.booking_id = :booking_id'
 );
+
 $stmt->execute([':booking_id' => $bookingId]);
 $booking = $stmt->fetch();
 
@@ -59,16 +64,24 @@ if (!$booking) {
 }
 
 $ownerValue = ($role === 'student') ? $booking['student_id'] : $booking['employee_id'];
+
 if ($ownerValue === null || (string) $ownerValue !== $userId) {
     stop_page('You are not allowed to manage equipment for this booking.');
 }
 
-// Load the available equipment.
-$equipmentList = $pdo->query(
-    'SELECT equipment_id, equipment_name FROM equipment ORDER BY equipment_name'
-)->fetchAll();
+// Load only equipment belonging to the booked room's library.
+$stmt = $pdo->prepare(
+    'SELECT equipment_id, equipment_name
+     FROM equipment
+     WHERE library_id = :library_id
+     ORDER BY equipment_name'
+);
+
+$stmt->execute([':library_id' => $booking['library_id']]);
+$equipmentList = $stmt->fetchAll();
 
 $validIds = [];
+
 foreach ($equipmentList as $equipment) {
     $validIds[(int) $equipment['equipment_id']] = true;
 }
@@ -84,6 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!is_array($selected)) {
         $selected = [];
     }
+
     if (!is_array($quantities)) {
         $quantities = [];
     }
@@ -102,6 +116,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $qtyRaw = $quantities[$id] ?? '';
         $posted[$id] = $qtyRaw;
+
         $qty = filter_var($qtyRaw, FILTER_VALIDATE_INT, [
             'options' => ['min_range' => 1, 'max_range' => $maxQty]
         ]);
@@ -140,7 +155,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $pdo->commit();
 
-            // After equipment saves successfully, return to the dashboard.
+            // Return to the dashboard after saving.
             header('Location: dashboard.php?message=equipment_saved');
             exit;
 
@@ -169,13 +184,16 @@ $stmt = $pdo->prepare(
      FROM booking_equipment
      WHERE booking_id = :booking_id'
 );
+
 $stmt->execute([':booking_id' => $bookingId]);
 
 $saved = [];
+
 foreach ($stmt->fetchAll() as $row) {
     $saved[(int) $row['equipment_id']] = (int) $row['quantity'];
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -184,15 +202,25 @@ foreach ($stmt->fetchAll() as $row) {
     <title>Booking Equipment</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
+
 <body class="bg-light">
+
 <div class="container my-4">
+
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-        <h1 class="h3 mb-0">Equipment for Booking #<?php echo (int) $booking['booking_id']; ?></h1>
+        <h1 class="h3 mb-0">
+            Equipment for Booking #<?php echo (int) $booking['booking_id']; ?>
+        </h1>
+
         <a href="dashboard.php" class="btn btn-outline-secondary">Dashboard</a>
     </div>
 
-    <p class="text-muted mb-1">Logged in as: <?php echo e($fullName); ?> (<?php echo e($role); ?>)</p>
+    <p class="text-muted mb-1">
+        Logged in as: <?php echo e($fullName); ?> (<?php echo e($role); ?>)
+    </p>
+
     <p class="mb-3">
+        <strong>Library:</strong> <?php echo e($booking['library_name']); ?><br>
         <strong>Purpose:</strong> <?php echo e($booking['topic_purpose']); ?><br>
         <strong>Date:</strong> <?php echo e($booking['booking_date']); ?>,
         <?php echo e($booking['start_time']); ?> - <?php echo e($booking['end_time']); ?>
@@ -209,13 +237,26 @@ foreach ($stmt->fetchAll() as $row) {
     <?php endif; ?>
 
     <?php if (!$equipmentList): ?>
-        <div class="alert alert-info">No equipment is available right now.</div>
+
+        <div class="alert alert-info">
+            No equipment is available for this library right now.
+        </div>
+
     <?php else: ?>
+
         <div class="card shadow-sm">
             <div class="card-body">
+
+                <h2 class="h5 mb-3">
+                    Available Equipment
+                </h2>
+
                 <form method="post" action="equipment.php?booking_id=<?php echo (int) $bookingId; ?>">
+
                     <div class="table-responsive">
+
                         <table class="table table-bordered align-middle">
+
                             <thead class="table-light">
                                 <tr>
                                     <th style="width: 90px;">Select</th>
@@ -223,51 +264,80 @@ foreach ($stmt->fetchAll() as $row) {
                                     <th style="width: 180px;">Quantity</th>
                                 </tr>
                             </thead>
+
                             <tbody>
+
                                 <?php foreach ($equipmentList as $equipment): ?>
+
                                     <?php
                                     $id = (int) $equipment['equipment_id'];
+
                                     $isChecked = ($_SERVER['REQUEST_METHOD'] === 'POST')
                                         ? isset($posted[$id])
                                         : isset($saved[$id]);
+
                                     $qtyValue = $posted[$id] ?? ($saved[$id] ?? 1);
                                     ?>
+
                                     <tr>
                                         <td class="text-center">
-                                            <input type="checkbox"
-                                                   class="form-check-input"
-                                                   name="selected[]"
-                                                   value="<?php echo $id; ?>"
-                                                   id="eq<?php echo $id; ?>"
-                                                   <?php echo $isChecked ? 'checked' : ''; ?>>
+                                            <input
+                                                type="checkbox"
+                                                class="form-check-input"
+                                                name="selected[]"
+                                                value="<?php echo $id; ?>"
+                                                id="eq<?php echo $id; ?>"
+                                                <?php echo $isChecked ? 'checked' : ''; ?>
+                                            >
                                         </td>
+
                                         <td>
                                             <label for="eq<?php echo $id; ?>" class="mb-0">
                                                 <?php echo e($equipment['equipment_name']); ?>
                                             </label>
                                         </td>
+
                                         <td>
-                                            <input type="number"
-                                                   class="form-control"
-                                                   name="quantity[<?php echo $id; ?>]"
-                                                   min="1"
-                                                   max="<?php echo $maxQty; ?>"
-                                                   step="1"
-                                                   value="<?php echo e($qtyValue); ?>"
-                                                   aria-label="Quantity for <?php echo e($equipment['equipment_name']); ?>">
+                                            <input
+                                                type="number"
+                                                class="form-control"
+                                                name="quantity[<?php echo $id; ?>]"
+                                                min="1"
+                                                max="<?php echo $maxQty; ?>"
+                                                step="1"
+                                                value="<?php echo e($qtyValue); ?>"
+                                                aria-label="Quantity for <?php echo e($equipment['equipment_name']); ?>"
+                                            >
                                         </td>
                                     </tr>
+
                                 <?php endforeach; ?>
+
                             </tbody>
+
                         </table>
+
                     </div>
 
-                    <button type="submit" class="btn btn-primary">Save Equipment and Return to Dashboard</button>
-                    <a href="participants.php?booking_id=<?php echo (int) $bookingId; ?>" class="btn btn-outline-secondary ms-2">Back to Participants</a>
+                    <button type="submit" class="btn btn-primary">
+                        Save Equipment and Return to Dashboard
+                    </button>
+
+                    <a
+                        href="participants.php?booking_id=<?php echo (int) $bookingId; ?>"
+                        class="btn btn-outline-secondary ms-2"
+                    >
+                        Back to Participants
+                    </a>
+
                 </form>
+
             </div>
         </div>
+
     <?php endif; ?>
+
 </div>
+
 </body>
 </html>
