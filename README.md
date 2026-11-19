@@ -35,6 +35,3 @@ A web-based study room booking system for University Of Baguio.
 \- Cabatic, Leila Marie
 
 \- Laño, Rysha Belle
-
-\- Sta. Maria, Mia Kyla
-
