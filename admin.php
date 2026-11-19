@@ -241,7 +241,7 @@ $fullName = $_SESSION['full_name'] ?? 'Administrator';
                                                     method="post"
                                                     action="admin_action.php"
                                                     class="ub-admin-action-form"
-                                                    onsubmit="return confirm('Are you sure you want to ' + this.action.value + ' this booking?');"
+                                                    onsubmit="return confirm('Are you sure you want to ' + (event.submitter.value === 'approved' ? 'approve' : 'reject') + ' this booking?');"
                                                 >
                                                     <input
                                                         type="hidden"
