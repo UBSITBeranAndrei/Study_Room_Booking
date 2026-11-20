@@ -76,6 +76,7 @@ if (!$bookingId) {
 $stmt = $pdo->prepare(
     'SELECT b.booking_id, b.student_id, b.employee_id, b.topic_purpose,
             b.booking_date, b.start_time, b.end_time, b.status, r.library_id,
+            b.booking_date, b.start_time, b.end_time, r.library_id,
             l.library_name
      FROM bookings b
      INNER JOIN rooms r ON b.room_id = r.room_id
@@ -609,6 +610,11 @@ foreach ($stmt->fetchAll() as $row) {
                                     </button>
 
                                 <?php endif; ?>
+                            <div class="ub-form-actions">
+
+                                <button type="submit" class="btn-ub">
+                                    Save Equipment and Return to Dashboard →
+                                </button>
 
                                 <a
                                     href="participants.php?booking_id=<?= (int) $bookingId ?>"

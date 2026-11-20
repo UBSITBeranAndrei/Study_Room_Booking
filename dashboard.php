@@ -36,6 +36,7 @@ if ($role === 'student' || $role === 'employee') {
                    (SELECT COUNT(*)
                     FROM booking_participants bp
                     WHERE bp.booking_id = b.booking_id) AS participant_count
+                   l.library_name, r.room_number
             FROM bookings b
             JOIN rooms r ON b.room_id = r.room_id
             JOIN libraries l ON r.library_id = l.library_id
@@ -92,6 +93,10 @@ $messageType = 'success';
 
 if (isset($_GET['message'], $messages[$_GET['message']])) {
     [$messageType, $message] = $messages[$_GET['message']];
+// Success message after equipment submission.
+$message = '';
+if (isset($_GET['message']) && $_GET['message'] === 'equipment_saved') {
+    $message = 'Equipment saved successfully. Check your booking status below.';
 }
 
 $roleLabel = ucfirst($role);
@@ -174,9 +179,9 @@ $roleLabel = ucfirst($role);
                 <span class="ub-role-label"><?= h($roleLabel) ?></span>
             </div>
 
-            <!-- NOTIFICATION MESSAGE -->
+            <!-- SUCCESS MESSAGE -->
             <?php if ($message !== ''): ?>
-                <div class="alert alert-<?= h($messageType) ?>" role="alert">
+                <div class="alert alert-success" role="alert">
                     <?= h($message) ?>
                 </div>
             <?php endif; ?>
@@ -324,6 +329,7 @@ $roleLabel = ucfirst($role);
                                                     <span class="text-muted small">—</span>
                                                 <?php endif; ?>
                                             </td>
+                                            <td><span class="status-badge <?= h($statusClass) ?>"><?= h($statusLabel) ?></span></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>

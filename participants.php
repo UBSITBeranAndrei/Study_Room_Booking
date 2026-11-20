@@ -87,6 +87,12 @@ $stmt = $pdo->prepare(
      FROM bookings b
      INNER JOIN rooms r ON r.room_id = b.room_id
      WHERE b.booking_id = :booking_id'
+// Get booking details and confirm ownership.
+$stmt = $pdo->prepare(
+    'SELECT booking_id, student_id, employee_id, topic_purpose,
+            booking_date, start_time, end_time, status
+     FROM bookings
+     WHERE booking_id = :booking_id'
 );
 
 $stmt->execute([':booking_id' => $bookingId]);
@@ -135,6 +141,7 @@ function load_participants(PDO $pdo, int $bookingId): array
     return $stmt->fetchAll();
 }
 
+$maxParticipants = 10;
 $errors = [];
 $oldRows = [];
 
@@ -277,6 +284,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$errors) {
                 } else {
                     header('Location: equipment.php?booking_id=' . (int) $bookingId);
                 }
+                header('Location: equipment.php?booking_id=' . (int) $bookingId);
                 exit;
             }
 
@@ -519,6 +527,7 @@ $justSaved = isset($_GET['saved']) && !$errors;
                         <span class="ub-participants-count">
                             <?= count($saved) ?> / <?= (int) $maxParticipants ?> Participants
                             (minimum <?= (int) $minParticipants ?>)
+                            <?= count($saved) ?> / <?= $maxParticipants ?> Participants
                         </span>
 
                     </div>
@@ -582,6 +591,7 @@ $justSaved = isset($_GET['saved']) && !$errors;
                 </a>
 
             <?php elseif ($remaining > 0): ?>
+            <?php if ($remaining > 0): ?>
 
                 <section class="ub-card ub-participants-card">
 
@@ -724,6 +734,7 @@ $justSaved = isset($_GET['saved']) && !$errors;
 
                 <div class="alert alert-info">
                     This booking already has the maximum of <?= (int) $maxParticipants ?> participants.
+                    This booking already has the maximum of <?= $maxParticipants ?> participants.
                 </div>
 
                 <a

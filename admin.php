@@ -37,23 +37,6 @@ if (isset($_GET['message'])) {
     }
 }
 
-// FIX 2: Release unfinished bookings (no participants after 15 minutes)
-// so they do not appear in the pending list or block time slots.
-try {
-    $pdo->exec(
-        "UPDATE bookings b
-         SET b.status = 'cancelled'
-         WHERE b.status = 'pending'
-           AND b.created_at < (NOW() - INTERVAL 15 MINUTE)
-           AND NOT EXISTS (
-               SELECT 1 FROM booking_participants bp
-               WHERE bp.booking_id = b.booking_id
-           )"
-    );
-} catch (PDOException $e) {
-    error_log('admin.php cleanup error: ' . $e->getMessage());
-}
-
 // Get pending bookings.
 $sql = "SELECT b.booking_id, b.topic_purpose,
                b.booking_date, b.start_time, b.end_time,
@@ -258,7 +241,7 @@ $fullName = $_SESSION['full_name'] ?? 'Administrator';
                                                     method="post"
                                                     action="admin_action.php"
                                                     class="ub-admin-action-form"
-                                                    onsubmit="return confirm('Are you sure you want to ' + this.action.value + ' this booking?');"
+                                                    onsubmit="return confirm('Are you sure you want to ' + (event.submitter.value === 'approved' ? 'approve' : 'reject') + ' this booking?');"
                                                 >
                                                     <input
                                                         type="hidden"
