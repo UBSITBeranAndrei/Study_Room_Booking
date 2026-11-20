@@ -79,6 +79,14 @@ if (!$bookingId) {
     stop_page('Invalid or missing booking ID.', 400);
 }
 
+// Get booking details, room capacity, and confirm ownership.
+$stmt = $pdo->prepare(
+    'SELECT b.booking_id, b.student_id, b.employee_id, b.topic_purpose,
+            b.booking_date, b.start_time, b.end_time, b.status,
+            r.min_capacity, r.max_capacity
+     FROM bookings b
+     INNER JOIN rooms r ON r.room_id = b.room_id
+     WHERE b.booking_id = :booking_id'
 // Get booking details and confirm ownership.
 $stmt = $pdo->prepare(
     'SELECT booking_id, student_id, employee_id, topic_purpose,
@@ -102,6 +110,22 @@ if ($ownerValue === null || (string) $ownerValue !== $userId) {
     stop_page('You are not allowed to manage participants for this booking.');
 }
 
+// FIX 1: Only pending bookings can still be changed.
+$isLocked = ($booking['status'] !== 'pending');
+
+// FIX 3: Make sure a CSRF token exists for the form.
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// FIX 5: Use the room's own capacity instead of a fixed number.
+$minParticipants = max(0, (int) $booking['min_capacity']);
+$maxParticipants = (int) $booking['max_capacity'];
+
+if ($maxParticipants < 1) {
+    $maxParticipants = 10; // Fallback if the room has no capacity set.
+}
+
 // Load saved participants.
 function load_participants(PDO $pdo, int $bookingId): array
 {
@@ -122,6 +146,19 @@ $errors = [];
 $oldRows = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+    $postedToken = (string) ($_POST['csrf_token'] ?? '');
+
+    if ($isLocked) {
+        // FIX 1: Block changes after the admin has processed the booking.
+        $errors[] = 'This booking is already ' . $booking['status'] . ' and can no longer be changed.';
+    } elseif (empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $postedToken)) {
+        // FIX 3: Reject requests without a valid token.
+        $errors[] = 'Your session token is invalid or expired. Please reload the page and try again.';
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$errors) {
 
     $submitted = $_POST['participants'] ?? [];
 
@@ -239,6 +276,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $pdo->commit();
 
+                // FIX 5: Stay on this page until the room minimum is reached.
+                $total = count($used) + count($valid);
+
+                if ($total < $minParticipants) {
+                    header('Location: participants.php?booking_id=' . (int) $bookingId . '&saved=1');
+                } else {
+                    header('Location: equipment.php?booking_id=' . (int) $bookingId);
+                }
                 header('Location: equipment.php?booking_id=' . (int) $bookingId);
                 exit;
             }
@@ -267,6 +312,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $saved = load_participants($pdo, (int) $bookingId);
 $remaining = max(0, $maxParticipants - count($saved));
+$belowMin = count($saved) < $minParticipants;
+$justSaved = isset($_GET['saved']) && !$errors;
 ?>
 
 <!DOCTYPE html>
@@ -411,6 +458,40 @@ $remaining = max(0, $maxParticipants - count($saved));
 
             </section>
 
+            <!-- STATUS MESSAGES -->
+
+            <?php if ($isLocked): ?>
+
+                <div class="alert alert-info" role="alert">
+                    This booking is <strong><?= e($booking['status']) ?></strong>.
+                    Participants can no longer be added or changed.
+                </div>
+
+            <?php else: ?>
+
+                <?php if ($justSaved): ?>
+                    <div class="alert alert-success" role="alert">
+                        Participants saved.
+                    </div>
+                <?php endif; ?>
+
+                <?php if ($belowMin): ?>
+                    <div class="alert alert-warning" role="alert">
+                        This room needs at least <strong><?= (int) $minParticipants ?></strong> participants.
+                        You have <?= count($saved) ?>. Add <?= (int) ($minParticipants - count($saved)) ?> more
+                        before an administrator can approve your booking.
+                    </div>
+                <?php endif; ?>
+
+                <?php if (count($saved) === 0): ?>
+                    <div class="alert alert-secondary" role="alert">
+                        Add at least one participant within 15 minutes, or this booking
+                        will be released so other users can book the time slot.
+                    </div>
+                <?php endif; ?>
+
+            <?php endif; ?>
+
             <!-- VALIDATION ERRORS -->
 
             <?php if ($errors): ?>
@@ -444,6 +525,8 @@ $remaining = max(0, $maxParticipants - count($saved));
                         <strong>Participant List</strong>
 
                         <span class="ub-participants-count">
+                            <?= count($saved) ?> / <?= (int) $maxParticipants ?> Participants
+                            (minimum <?= (int) $minParticipants ?>)
                             <?= count($saved) ?> / <?= $maxParticipants ?> Participants
                         </span>
 
@@ -501,6 +584,13 @@ $remaining = max(0, $maxParticipants - count($saved));
 
             <!-- ADD PARTICIPANTS FORM -->
 
+            <?php if ($isLocked): ?>
+
+                <a href="dashboard.php" class="btn-ub">
+                    Back to Dashboard
+                </a>
+
+            <?php elseif ($remaining > 0): ?>
             <?php if ($remaining > 0): ?>
 
                 <section class="ub-card ub-participants-card">
@@ -526,6 +616,12 @@ $remaining = max(0, $maxParticipants - count($saved));
                             action="participants.php?booking_id=<?= (int) $bookingId ?>"
                             id="participantsForm"
                         >
+
+                            <input
+                                type="hidden"
+                                name="csrf_token"
+                                value="<?= e($_SESSION['csrf_token']) ?>"
+                            >
 
                             <?php for ($i = 0; $i < $remaining; $i++): ?>
 
@@ -613,6 +709,15 @@ $remaining = max(0, $maxParticipants - count($saved));
                                     Save Participants and Continue →
                                 </button>
 
+                                <?php if (!$belowMin && count($saved) > 0): ?>
+                                    <a
+                                        href="equipment.php?booking_id=<?= (int) $bookingId ?>"
+                                        class="btn-ub-outline"
+                                    >
+                                        Skip to Equipment
+                                    </a>
+                                <?php endif; ?>
+
                                 <a href="dashboard.php" class="btn-ub-outline">
                                     Dashboard
                                 </a>
@@ -628,6 +733,7 @@ $remaining = max(0, $maxParticipants - count($saved));
             <?php else: ?>
 
                 <div class="alert alert-info">
+                    This booking already has the maximum of <?= (int) $maxParticipants ?> participants.
                     This booking already has the maximum of <?= $maxParticipants ?> participants.
                 </div>
 

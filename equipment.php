@@ -75,6 +75,7 @@ if (!$bookingId) {
 // Retrieve booking details, library, and verify ownership.
 $stmt = $pdo->prepare(
     'SELECT b.booking_id, b.student_id, b.employee_id, b.topic_purpose,
+            b.booking_date, b.start_time, b.end_time, b.status, r.library_id,
             b.booking_date, b.start_time, b.end_time, r.library_id,
             l.library_name
      FROM bookings b
@@ -96,6 +97,14 @@ $ownerValue = ($role === 'student')
 
 if ($ownerValue === null || (string) $ownerValue !== $userId) {
     stop_page('You are not allowed to manage equipment for this booking.');
+}
+
+// FIX 1: Only pending bookings can still be changed.
+$isLocked = ($booking['status'] !== 'pending');
+
+// FIX 3: Make sure a CSRF token exists for the form.
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
 // Load only equipment belonging to the booked room's library.
@@ -121,6 +130,19 @@ $posted = [];
 
 // Process equipment selections.
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+    $postedToken = (string) ($_POST['csrf_token'] ?? '');
+
+    if ($isLocked) {
+        // FIX 1: Block changes after the admin has processed the booking.
+        $errors[] = 'This booking is already ' . $booking['status'] . ' and can no longer be changed.';
+    } elseif (empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $postedToken)) {
+        // FIX 3: Reject requests without a valid token.
+        $errors[] = 'Your session token is invalid or expired. Please reload the page and try again.';
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$errors) {
 
     $selected = $_POST['selected'] ?? [];
     $quantities = $_POST['quantity'] ?? [];
@@ -173,6 +195,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         try {
             $pdo->beginTransaction();
+
+            // FIX 4: Remove saved items that the user unticked.
+            $placeholders = implode(',', array_fill(0, count($toSave), '?'));
+
+            $deleteStmt = $pdo->prepare(
+                "DELETE FROM booking_equipment
+                 WHERE booking_id = ?
+                   AND equipment_id NOT IN ($placeholders)"
+            );
+
+            $deleteStmt->execute(array_merge([$bookingId], array_keys($toSave)));
 
             // Insert selected items or update existing quantities.
             $stmt = $pdo->prepare(
@@ -398,6 +431,17 @@ foreach ($stmt->fetchAll() as $row) {
 
             </section>
 
+            <!-- LOCKED BOOKING MESSAGE -->
+
+            <?php if ($isLocked): ?>
+
+                <div class="alert alert-info" role="alert">
+                    This booking is <strong><?= e($booking['status']) ?></strong>.
+                    Equipment can no longer be changed.
+                </div>
+
+            <?php endif; ?>
+
             <!-- VALIDATION ERRORS -->
 
             <?php if ($errors): ?>
@@ -453,6 +497,15 @@ foreach ($stmt->fetchAll() as $row) {
                             method="post"
                             action="equipment.php?booking_id=<?= (int) $bookingId ?>"
                         >
+
+                            <input
+                                type="hidden"
+                                name="csrf_token"
+                                value="<?= e($_SESSION['csrf_token']) ?>"
+                            >
+
+                            <!-- FIX 1: Disable every input when the booking is locked. -->
+                            <fieldset <?= $isLocked ? 'disabled' : '' ?>>
 
                             <div class="table-responsive">
 
@@ -540,6 +593,23 @@ foreach ($stmt->fetchAll() as $row) {
 
                             </div>
 
+                            </fieldset>
+
+                            <div class="ub-form-actions">
+
+                                <?php if ($isLocked): ?>
+
+                                    <a href="dashboard.php" class="btn-ub">
+                                        Back to Dashboard
+                                    </a>
+
+                                <?php else: ?>
+
+                                    <button type="submit" class="btn-ub">
+                                        Save Equipment and Return to Dashboard →
+                                    </button>
+
+                                <?php endif; ?>
                             <div class="ub-form-actions">
 
                                 <button type="submit" class="btn-ub">

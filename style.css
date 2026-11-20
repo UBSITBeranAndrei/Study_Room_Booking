@@ -3061,3 +3061,18 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
         padding: 18px;
     }
 }
+/* =========================================================
+   31. MY BOOKINGS - CANCEL / DELETE BUTTON
+   ========================================================= */
+
+.ub-booking-action-form {
+    margin: 0;
+}
+
+.ub-btn-sm {
+    min-height: 32px;
+    padding: 6px 11px;
+    font-size: 11px;
+    white-space: nowrap;
+}
+}
