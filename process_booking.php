@@ -137,6 +137,26 @@ if ($errors) {
     backToForm($roomId, $errors, $old);
 }
 
+// FIX 2: Release unfinished bookings so they stop blocking time slots.
+// A pending booking with no participants after 15 minutes is cancelled.
+$releaseMinutes = 15;
+
+try {
+    $pdo->exec(
+        "UPDATE bookings b
+         SET b.status = 'cancelled'
+         WHERE b.status = 'pending'
+           AND b.created_at < (NOW() - INTERVAL " . (int) $releaseMinutes . " MINUTE)
+           AND NOT EXISTS (
+               SELECT 1 FROM booking_participants bp
+               WHERE bp.booking_id = b.booking_id
+           )"
+    );
+} catch (PDOException $e) {
+    // Do not stop the booking if the cleanup fails; just log it.
+    error_log('process_booking.php cleanup error: ' . $e->getMessage());
+}
+
 try {
     $stmt = $pdo->prepare('SELECT room_id FROM rooms WHERE room_id = ?');
     $stmt->execute([$roomId]);
