@@ -70,10 +70,28 @@ $statusClasses = [
     'completed' => 'status-completed'
 ];
 
-// Success message after equipment submission.
+// Used to decide if an approved booking has not started yet.
+date_default_timezone_set('Asia/Manila');
+
+// Token for the cancel/delete forms.
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// Messages shown after equipment saving or cancelling a booking.
+$messages = [
+    'equipment_saved' => ['success', 'Equipment saved successfully. Check your booking status below.'],
+    'booking_deleted' => ['success', 'Booking deleted successfully.'],
+    'booking_cancelled' => ['success', 'Your approved booking was cancelled. The room is now free for other users.'],
+    'cancel_invalid' => ['danger', 'That booking can no longer be cancelled or deleted.'],
+    'cancel_error' => ['danger', 'Something went wrong while cancelling the booking. Please try again.'],
+];
+
 $message = '';
-if (isset($_GET['message']) && $_GET['message'] === 'equipment_saved') {
-    $message = 'Equipment saved successfully. Check your booking status below.';
+$messageType = 'success';
+
+if (isset($_GET['message'], $messages[$_GET['message']])) {
+    [$messageType, $message] = $messages[$_GET['message']];
 }
 
 $roleLabel = ucfirst($role);
@@ -156,9 +174,9 @@ $roleLabel = ucfirst($role);
                 <span class="ub-role-label"><?= h($roleLabel) ?></span>
             </div>
 
-            <!-- SUCCESS MESSAGE -->
+            <!-- NOTIFICATION MESSAGE -->
             <?php if ($message !== ''): ?>
-                <div class="alert alert-success" role="alert">
+                <div class="alert alert-<?= h($messageType) ?>" role="alert">
                     <?= h($message) ?>
                 </div>
             <?php endif; ?>
@@ -221,6 +239,7 @@ $roleLabel = ucfirst($role);
                                         <th>Time</th>
                                         <th>Purpose</th>
                                         <th>Status</th>
+                                        <th>Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -235,6 +254,24 @@ $roleLabel = ucfirst($role);
                                         $neededCount = max(0, (int) $booking['min_capacity'] - $participantCount);
                                         $isIncomplete = ($status === 'pending')
                                             && ($participantCount === 0 || $neededCount > 0);
+
+                                        // Cancel / delete rules (handled by cancel_booking.php).
+                                        $startsAt = strtotime($booking['booking_date'] . ' ' . $booking['start_time']);
+                                        $isUpcoming = ($startsAt !== false && $startsAt > time());
+
+                                        $canDelete = in_array($status, ['pending', 'rejected', 'cancelled'], true);
+                                        $canCancel = ($status === 'approved' && $isUpcoming);
+
+                                        if ($status === 'pending') {
+                                            $actionLabel = 'Cancel Booking';
+                                            $confirmText = 'Cancel this booking? It will be permanently deleted together with its participants and equipment.';
+                                        } elseif ($canDelete) {
+                                            $actionLabel = 'Delete';
+                                            $confirmText = 'Delete this booking from your list? This cannot be undone.';
+                                        } else {
+                                            $actionLabel = 'Cancel Booking';
+                                            $confirmText = 'Cancel this approved booking? The room will be released for other users.';
+                                        }
                                         ?>
                                         <tr>
                                             <td>#<?= (int) $booking['booking_id'] ?></td>
@@ -259,6 +296,34 @@ $roleLabel = ucfirst($role);
                                                     </a>
                                                 <?php endif; ?>
                                             </td>
+                                            <td>
+                                                <?php if ($canDelete || $canCancel): ?>
+                                                    <form
+                                                        method="post"
+                                                        action="cancel_booking.php"
+                                                        class="ub-booking-action-form"
+                                                        onsubmit="return confirm(<?= h(json_encode($confirmText)) ?>);"
+                                                    >
+                                                        <input
+                                                            type="hidden"
+                                                            name="booking_id"
+                                                            value="<?= (int) $booking['booking_id'] ?>"
+                                                        >
+
+                                                        <input
+                                                            type="hidden"
+                                                            name="csrf_token"
+                                                            value="<?= h($_SESSION['csrf_token']) ?>"
+                                                        >
+
+                                                        <button type="submit" class="btn-ub-danger ub-btn-sm">
+                                                            <?= h($actionLabel) ?>
+                                                        </button>
+                                                    </form>
+                                                <?php else: ?>
+                                                    <span class="text-muted small">—</span>
+                                                <?php endif; ?>
+                                            </td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>
@@ -267,6 +332,7 @@ $roleLabel = ucfirst($role);
 
                         <p class="text-muted small mt-3 mb-0">
                             Pending approval means your booking is waiting for an administrator to review it.
+                            You can cancel a pending booking or an approved booking that has not started yet.
                         </p>
                     <?php endif; ?>
                 </section>
