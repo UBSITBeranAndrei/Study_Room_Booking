@@ -1,17 +1,23 @@
 
 <?php
-require_once __DIR__ . '/dbconn.php';
-
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-function e($value)
+require_once __DIR__ . '/dbconn.php';
+
+date_default_timezone_set('Asia/Manila');
+
+/* =========================================================
+   HELPER FUNCTIONS
+========================================================= */
+
+function e($value): string
 {
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 }
 
-function stop_page($message, $code = 403)
+function stop_page(string $message, int $code = 403): void
 {
     http_response_code($code);
     ?>
@@ -20,13 +26,22 @@ function stop_page($message, $code = 403)
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Participants - University of Baguio</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+        <title>Participants | University of Baguio</title>
+
+        <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+        >
+
         <link rel="stylesheet" href="style.css">
     </head>
+
     <body>
+
         <main class="ub-auth-page">
+
             <div class="ub-auth-card">
+
                 <div class="ub-auth-header">
                     <div class="ub-sidebar-university">UNIVERSITY OF</div>
                     <div class="ub-brand">BAGUIO</div>
@@ -41,62 +56,93 @@ function stop_page($message, $code = 403)
                 <a href="dashboard.php" class="btn-ub w-100">
                     Return to Dashboard
                 </a>
+
             </div>
+
         </main>
+
     </body>
     </html>
     <?php
     exit;
 }
 
-// Require login.
+/* =========================================================
+   LOGIN AND ROLE VALIDATION
+========================================================= */
+
 if (empty($_SESSION['user_id']) || empty($_SESSION['role'])) {
     header('Location: login.php');
     exit;
 }
 
-$userId = (string) $_SESSION['user_id'];
+$userId = (int) $_SESSION['user_id'];
 $role = strtolower((string) $_SESSION['role']);
 $fullName = $_SESSION['full_name'] ?? 'User';
 
-if ($role !== 'student' && $role !== 'employee') {
-    stop_page('Only students or employees can manage participants.');
+if (!in_array($role, ['student', 'employee'], true)) {
+    stop_page('Only students or employees can manage booking participants.');
 }
 
-// Dynamic participant number label.
 $participantNumberLabel = ($role === 'employee')
     ? 'Employee Number'
     : 'Student Number';
 
 $participantNumberLabelLower = strtolower($participantNumberLabel);
 
-// Validate booking ID.
-$bookingId = filter_input(INPUT_GET, 'booking_id', FILTER_VALIDATE_INT, [
-    'options' => ['min_range' => 1]
-]);
+/* =========================================================
+   BOOKING ID VALIDATION
+========================================================= */
+
+$bookingId = filter_input(
+    INPUT_GET,
+    'booking_id',
+    FILTER_VALIDATE_INT,
+    ['options' => ['min_range' => 1]]
+);
 
 if (!$bookingId) {
     stop_page('Invalid or missing booking ID.', 400);
 }
 
-// Get booking details, room capacity, and confirm ownership.
-$stmt = $pdo->prepare(
-    'SELECT b.booking_id, b.student_id, b.employee_id, b.topic_purpose,
-            b.booking_date, b.start_time, b.end_time, b.status,
-            r.min_capacity, r.max_capacity
-     FROM bookings b
-     INNER JOIN rooms r ON r.room_id = b.room_id
-     WHERE b.booking_id = :booking_id'
-// Get booking details and confirm ownership.
-$stmt = $pdo->prepare(
-    'SELECT booking_id, student_id, employee_id, topic_purpose,
-            booking_date, start_time, end_time, status
-     FROM bookings
-     WHERE booking_id = :booking_id'
-);
+$bookingId = (int) $bookingId;
 
-$stmt->execute([':booking_id' => $bookingId]);
-$booking = $stmt->fetch();
+/* =========================================================
+   LOAD BOOKING AND VERIFY OWNERSHIP
+========================================================= */
+
+try {
+
+    $stmt = $pdo->prepare(
+        "SELECT
+            b.booking_id,
+            b.student_id,
+            b.employee_id,
+            b.topic_purpose,
+            b.booking_date,
+            b.start_time,
+            b.end_time,
+            b.status,
+            r.min_capacity,
+            r.max_capacity
+         FROM bookings b
+         INNER JOIN rooms r ON r.room_id = b.room_id
+         WHERE b.booking_id = :booking_id
+         LIMIT 1"
+    );
+
+    $stmt->execute([
+        ':booking_id' => $bookingId
+    ]);
+
+    $booking = $stmt->fetch();
+
+} catch (PDOException $ex) {
+
+    error_log('Participants booking query error: ' . $ex->getMessage());
+
+    stop_page('Unable to load the booking details. Please try again later.', 500);
+}
 
 if (!$booking) {
     stop_page('Booking not found.', 404);
@@ -106,227 +152,413 @@ $ownerValue = ($role === 'student')
     ? $booking['student_id']
     : $booking['employee_id'];
 
-if ($ownerValue === null || (string) $ownerValue !== $userId) {
+if ($ownerValue === null || (int) $ownerValue !== $userId) {
     stop_page('You are not allowed to manage participants for this booking.');
 }
 
-// FIX 1: Only pending bookings can still be changed.
-$isLocked = ($booking['status'] !== 'pending');
+/* =========================================================
+   ROOM CAPACITY
+========================================================= */
 
-// FIX 3: Make sure a CSRF token exists for the form.
+$minParticipants = max(1, (int) $booking['min_capacity']);
+$maxParticipants = (int) $booking['max_capacity'];
+
+if ($maxParticipants < 1) {
+    stop_page('The selected room has an invalid maximum capacity.', 500);
+}
+
+if ($minParticipants > $maxParticipants) {
+    stop_page('The room capacity settings are invalid. Please contact the administrator.', 500);
+}
+
+/* =========================================================
+   CSRF TOKEN
+========================================================= */
+
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// FIX 5: Use the room's own capacity instead of a fixed number.
-$minParticipants = max(0, (int) $booking['min_capacity']);
-$maxParticipants = (int) $booking['max_capacity'];
+/* =========================================================
+   LOAD SAVED PARTICIPANTS
+========================================================= */
 
-if ($maxParticipants < 1) {
-    $maxParticipants = 10; // Fallback if the room has no capacity set.
-}
-
-// Load saved participants.
 function load_participants(PDO $pdo, int $bookingId): array
 {
     $stmt = $pdo->prepare(
-        'SELECT line_number, participant_name, student_no, department
+        "SELECT
+            line_number,
+            participant_name,
+            student_no,
+            department
          FROM booking_participants
          WHERE booking_id = :booking_id
-         ORDER BY line_number'
+         ORDER BY line_number ASC"
     );
 
-    $stmt->execute([':booking_id' => $bookingId]);
+    $stmt->execute([
+        ':booking_id' => $bookingId
+    ]);
 
     return $stmt->fetchAll();
 }
 
-$maxParticipants = 10;
+try {
+
+    $saved = load_participants($pdo, $bookingId);
+
+} catch (PDOException $ex) {
+
+    error_log('Participants loading error: ' . $ex->getMessage());
+
+    stop_page('Unable to load the saved participants.', 500);
+}
+
+/* =========================================================
+   INITIAL PAGE VALUES
+========================================================= */
+
 $errors = [];
 $oldRows = [];
+
+$isLocked = ($booking['status'] !== 'pending');
+
+$savedCount = count($saved);
+$remaining = max(0, $maxParticipants - $savedCount);
+
+$belowMin = ($savedCount < $minParticipants);
+
+$justSaved = (
+    isset($_GET['saved']) &&
+    $_GET['saved'] === '1'
+);
+
+/* =========================================================
+   PROCESS FORM SUBMISSION
+========================================================= */
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $postedToken = (string) ($_POST['csrf_token'] ?? '');
 
     if ($isLocked) {
-        // FIX 1: Block changes after the admin has processed the booking.
-        $errors[] = 'This booking is already ' . $booking['status'] . ' and can no longer be changed.';
-    } elseif (empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $postedToken)) {
-        // FIX 3: Reject requests without a valid token.
+
+        $errors[] = 'This booking is already ' .
+            $booking['status'] .
+            ' and can no longer be changed.';
+
+    } elseif (
+        empty($_SESSION['csrf_token']) ||
+        !hash_equals($_SESSION['csrf_token'], $postedToken)
+    ) {
+
         $errors[] = 'Your session token is invalid or expired. Please reload the page and try again.';
-    }
-}
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$errors) {
+    } else {
 
-    $submitted = $_POST['participants'] ?? [];
+        $submitted = $_POST['participants'] ?? [];
 
-    if (!is_array($submitted)) {
-        $submitted = [];
-    }
-
-    $valid = [];
-    $rowNo = 0;
-
-    foreach ($submitted as $row) {
-
-        $rowNo++;
-
-        if (!is_array($row)) {
-            continue;
+        if (!is_array($submitted)) {
+            $submitted = [];
+            $errors[] = 'Invalid participant information submitted.';
         }
 
-        $name = trim((string) ($row['name'] ?? ''));
-        $sno = trim((string) ($row['student_no'] ?? ''));
-        $dept = trim((string) ($row['department'] ?? ''));
+        $validParticipants = [];
 
-        $oldRows[] = [
-            'name' => $name,
-            'student_no' => $sno,
-            'department' => $dept
-        ];
+        foreach ($submitted as $index => $row) {
 
-        // Ignore completely empty rows.
-        if ($name === '' && $sno === '' && $dept === '') {
-            continue;
+            $rowNumber = (int) $index + 1;
+
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $name = trim((string) ($row['name'] ?? ''));
+            $number = trim((string) ($row['student_no'] ?? ''));
+            $department = trim((string) ($row['department'] ?? ''));
+
+            $oldRows[$index] = [
+                'name' => $name,
+                'student_no' => $number,
+                'department' => $department
+            ];
+
+            // Ignore completely empty rows.
+            if (
+                $name === '' &&
+                $number === '' &&
+                $department === ''
+            ) {
+                continue;
+            }
+
+            if ($name === '') {
+
+                $errors[] = "Participant row $rowNumber: name is required.";
+
+            } elseif (mb_strlen($name) > 100) {
+
+                $errors[] = "Participant row $rowNumber: name must not exceed 100 characters.";
+
+            }
+
+            if ($number === '') {
+
+                $errors[] = "Participant row $rowNumber: $participantNumberLabelLower is required.";
+
+            } elseif (!preg_match('/^[A-Za-z0-9\-]{1,20}$/', $number)) {
+
+                $errors[] = "Participant row $rowNumber: $participantNumberLabelLower must contain only letters, numbers, or dashes, up to 20 characters.";
+
+            }
+
+            if ($department === '') {
+
+                $errors[] = "Participant row $rowNumber: department is required.";
+
+            } elseif (mb_strlen($department) > 100) {
+
+                $errors[] = "Participant row $rowNumber: department must not exceed 100 characters.";
+
+            }
+
+            if (
+                $name !== '' &&
+                $number !== '' &&
+                $department !== '' &&
+                mb_strlen($name) <= 100 &&
+                mb_strlen($department) <= 100 &&
+                preg_match('/^[A-Za-z0-9\-]{1,20}$/', $number)
+            ) {
+
+                $validParticipants[] = [
+                    'name' => $name,
+                    'student_no' => $number,
+                    'department' => $department
+                ];
+
+            }
         }
 
-        if ($name === '') {
-            $errors[] = "Row $rowNo: participant name is required.";
-        } elseif (mb_strlen($name) > 100) {
-            $errors[] = "Row $rowNo: participant name is too long (max 100 characters).";
+        if (!$errors && count($validParticipants) === 0) {
+            $errors[] = 'Please enter at least one participant.';
         }
 
-        if ($sno === '') {
-            $errors[] = "Row $rowNo: $participantNumberLabelLower is required.";
-        } elseif (!preg_match('/^[A-Za-z0-9\-]{1,20}$/', $sno)) {
-            $errors[] = "Row $rowNo: $participantNumberLabelLower may only use letters, numbers, and dashes (max 20).";
+        if (
+            !$errors &&
+            count($validParticipants) > $remaining
+        ) {
+            $errors[] = "You can only add $remaining more participant(s) to this booking.";
         }
 
-        if ($dept === '') {
-            $errors[] = "Row $rowNo: department is required.";
-        } elseif (mb_strlen($dept) > 100) {
-            $errors[] = "Row $rowNo: department is too long (max 100 characters).";
-        }
+        /* =================================================
+           SAVE PARTICIPANTS
+        ================================================= */
 
-        $valid[] = [
-            'name' => $name,
-            'student_no' => $sno,
-            'department' => $dept
-        ];
-    }
+        if (!$errors) {
 
-    if (!$errors && count($valid) === 0) {
-        $errors[] = 'Please enter at least one participant.';
-    }
+            try {
 
-    if (!$errors) {
+                $pdo->beginTransaction();
 
-        try {
-            $pdo->beginTransaction();
-
-            // Lock existing participant line numbers.
-            $stmt = $pdo->prepare(
-                'SELECT line_number
-                 FROM booking_participants
-                 WHERE booking_id = :booking_id
-                 FOR UPDATE'
-            );
-
-            $stmt->execute([':booking_id' => $bookingId]);
-
-            $used = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
-
-            if (count($used) + count($valid) > $maxParticipants) {
-
-                $pdo->rollBack();
-
-                $left = max(0, $maxParticipants - count($used));
-
-                $errors[] = "A booking can only have $maxParticipants participants. You can add $left more.";
-
-            } else {
-
-                $free = [];
-
-                for ($i = 1; $i <= $maxParticipants; $i++) {
-                    if (!in_array($i, $used, true)) {
-                        $free[] = $i;
-                    }
-                }
-
+                // Lock booking record and verify that it is still pending.
                 $stmt = $pdo->prepare(
-                    'INSERT INTO booking_participants
-                        (booking_id, line_number, participant_name, student_no, department)
-                     VALUES
-                        (:booking_id, :line_number, :name, :student_no, :department)'
+                    "SELECT status
+                     FROM bookings
+                     WHERE booking_id = :booking_id
+                     FOR UPDATE"
                 );
 
-                foreach ($valid as $index => $participant) {
+                $stmt->execute([
+                    ':booking_id' => $bookingId
+                ]);
+
+                $currentStatus = $stmt->fetchColumn();
+
+                if ($currentStatus !== 'pending') {
+
+                    $pdo->rollBack();
+
+                    $errors[] = 'This booking is no longer pending and cannot be changed.';
+
+                } else {
+
+                    // Lock and retrieve existing participant line numbers.
+                    $stmt = $pdo->prepare(
+                        "SELECT line_number
+                         FROM booking_participants
+                         WHERE booking_id = :booking_id
+                         FOR UPDATE"
+                    );
 
                     $stmt->execute([
-                        ':booking_id' => $bookingId,
-                        ':line_number' => $free[$index],
-                        ':name' => $participant['name'],
-                        ':student_no' => $participant['student_no'],
-                        ':department' => $participant['department']
+                        ':booking_id' => $bookingId
                     ]);
+
+                    $usedLineNumbers = array_map(
+                        'intval',
+                        $stmt->fetchAll(PDO::FETCH_COLUMN)
+                    );
+
+                    $currentCount = count($usedLineNumbers);
+
+                    if (
+                        $currentCount + count($validParticipants) >
+                        $maxParticipants
+                    ) {
+
+                        $pdo->rollBack();
+
+                        $left = max(0, $maxParticipants - $currentCount);
+
+                        $errors[] = "This room allows a maximum of $maxParticipants participants. You can add $left more.";
+
+                    } else {
+
+                        // Find available participant line numbers.
+                        $availableLines = [];
+
+                        for ($line = 1; $line <= $maxParticipants; $line++) {
+
+                            if (!in_array($line, $usedLineNumbers, true)) {
+                                $availableLines[] = $line;
+                            }
+
+                        }
+
+                        $insert = $pdo->prepare(
+                            "INSERT INTO booking_participants
+                                (
+                                    booking_id,
+                                    line_number,
+                                    participant_name,
+                                    student_no,
+                                    department
+                                )
+                             VALUES
+                                (
+                                    :booking_id,
+                                    :line_number,
+                                    :name,
+                                    :student_no,
+                                    :department
+                                )"
+                        );
+
+                        foreach ($validParticipants as $index => $participant) {
+
+                            $insert->execute([
+                                ':booking_id' => $bookingId,
+                                ':line_number' => $availableLines[$index],
+                                ':name' => $participant['name'],
+                                ':student_no' => $participant['student_no'],
+                                ':department' => $participant['department']
+                            ]);
+
+                        }
+
+                        $pdo->commit();
+
+                        // Calculate total saved participants.
+                        $newTotal = $currentCount + count($validParticipants);
+
+                        // Reload page if the room's minimum has not been reached.
+                        if ($newTotal < $minParticipants) {
+
+                            header(
+                                'Location: participants.php?booking_id=' .
+                                $bookingId .
+                                '&saved=1'
+                            );
+
+                            exit;
+
+                        }
+
+                        // Continue to equipment selection.
+                        header(
+                            'Location: equipment.php?booking_id=' . $bookingId
+                        );
+
+                        exit;
+
+                    }
+
                 }
 
-                $pdo->commit();
+            } catch (PDOException $ex) {
 
-                // FIX 5: Stay on this page until the room minimum is reached.
-                $total = count($used) + count($valid);
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
 
-                if ($total < $minParticipants) {
-                    header('Location: participants.php?booking_id=' . (int) $bookingId . '&saved=1');
+                $sqlState = (string) ($ex->errorInfo[0] ?? $ex->getCode());
+                $driverCode = (int) ($ex->errorInfo[1] ?? 0);
+
+                if ($driverCode === 1062) {
+
+                    $errors[] = 'A participant line number or participant record already exists. Please reload the page and try again.';
+
+                } elseif ($sqlState === '45000' || $driverCode === 1644) {
+
+                    $errors[] = 'The database rejected the participant information. Please check the entered details.';
+
                 } else {
-                    header('Location: equipment.php?booking_id=' . (int) $bookingId);
+
+                    error_log('Participants saving error: ' . $ex->getMessage());
+
+                    $errors[] = 'Unable to save participants. Please try again.';
+
                 }
-                header('Location: equipment.php?booking_id=' . (int) $bookingId);
-                exit;
+
             }
 
-        } catch (PDOException $ex) {
-
-            if ($pdo->inTransaction()) {
-                $pdo->rollBack();
-            }
-
-            $sqlState = (string) ($ex->errorInfo[0] ?? $ex->getCode());
-            $driverCode = (int) ($ex->errorInfo[1] ?? 0);
-            $dbMessage = (string) ($ex->errorInfo[2] ?? '');
-
-            if ($sqlState === '45000' || $driverCode === 1644) {
-                $errors[] = 'The database rejected the participants: ' . $dbMessage;
-            } elseif ($driverCode === 1062) {
-                $errors[] = 'A participant line number is already used. Please try again.';
-            } else {
-                error_log($ex->getMessage());
-                $errors[] = 'Could not save the participants. Please try again.';
-            }
         }
+
     }
+
 }
 
-$saved = load_participants($pdo, (int) $bookingId);
-$remaining = max(0, $maxParticipants - count($saved));
-$belowMin = count($saved) < $minParticipants;
-$justSaved = isset($_GET['saved']) && !$errors;
+/* =========================================================
+   RELOAD PARTICIPANTS AFTER FORM PROCESSING
+========================================================= */
+
+try {
+
+    $saved = load_participants($pdo, $bookingId);
+
+} catch (PDOException $ex) {
+
+    error_log('Participants refresh error: ' . $ex->getMessage());
+
+    stop_page('Unable to refresh the participant list.', 500);
+}
+
+$savedCount = count($saved);
+$remaining = max(0, $maxParticipants - $savedCount);
+$belowMin = ($savedCount < $minParticipants);
+
+$isLocked = ($booking['status'] !== 'pending');
+
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 
 <head>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <title>Booking Participants - University of Baguio</title>
+    <title>Booking Participants | University of Baguio</title>
 
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link
+        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+        rel="stylesheet"
+    >
+
     <link rel="stylesheet" href="style.css">
+
 </head>
 
 <body>
@@ -339,9 +571,13 @@ $justSaved = isset($_GET['saved']) && !$errors;
 
         <div class="ub-sidebar-header">
 
-            <div class="ub-sidebar-university">UNIVERSITY OF</div>
+            <div class="ub-sidebar-university">
+                UNIVERSITY OF
+            </div>
 
-            <div class="ub-brand">BAGUIO</div>
+            <div class="ub-brand">
+                BAGUIO
+            </div>
 
             <div class="ub-brand-subtitle">
                 STUDY ROOM BOOKING
@@ -350,32 +586,41 @@ $justSaved = isset($_GET['saved']) && !$errors;
         </div>
 
         <div class="ub-user-profile">
+
             <strong><?= e($fullName) ?></strong>
+
             <small><?= e(ucfirst($role)) ?> Account</small>
+
         </div>
 
         <nav>
 
             <a href="dashboard.php">
-                <span>▣</span> Dashboard
+                <span>▣</span>
+                Dashboard
             </a>
 
             <a href="libraries.php">
-                <span>▦</span> Browse Libraries
+                <span>▦</span>
+                Browse Libraries
             </a>
 
             <a href="dashboard.php#my-bookings">
-                <span>▤</span> My Bookings
+                <span>▤</span>
+                My Bookings
             </a>
 
         </nav>
 
         <div class="ub-sidebar-bottom">
+
             <nav>
                 <a href="logout.php">
-                    <span>↪</span> Logout
+                    <span>↪</span>
+                    Logout
                 </a>
             </nav>
+
         </div>
 
     </aside>
@@ -386,16 +631,20 @@ $justSaved = isset($_GET['saved']) && !$errors;
 
         <div class="ub-content">
 
-            <!-- PAGE HEADING -->
+            <!-- PAGE HEADER -->
 
             <div class="ub-content-header">
 
                 <div>
-                    <h1 class="ub-page-title">Booking Participants</h1>
+
+                    <h1 class="ub-page-title">
+                        Booking Participants
+                    </h1>
 
                     <p class="ub-page-subtitle">
                         Add the people who will join your discussion room booking.
                     </p>
+
                 </div>
 
                 <span class="ub-role-label">
@@ -408,7 +657,9 @@ $justSaved = isset($_GET['saved']) && !$errors;
 
             <div class="ub-banner">
 
-                <h2>Manage Your Participants</h2>
+                <h2>
+                    Manage Your Participants
+                </h2>
 
                 <p>
                     Add your group members before continuing to equipment selection.
@@ -421,7 +672,11 @@ $justSaved = isset($_GET['saved']) && !$errors;
             <section class="ub-card ub-participants-card">
 
                 <div class="ub-participants-card-header">
-                    <h2>Booking #<?= (int) $booking['booking_id'] ?> Summary</h2>
+
+                    <h2>
+                        Booking #<?= (int) $booking['booking_id'] ?> Summary
+                    </h2>
+
                 </div>
 
                 <div class="ub-participants-card-body">
@@ -429,27 +684,47 @@ $justSaved = isset($_GET['saved']) && !$errors;
                     <div class="row g-3">
 
                         <div class="col-md-4">
+
                             <div class="ub-participant-summary-item">
+
                                 <small>BOOKING PURPOSE</small>
-                                <strong><?= e($booking['topic_purpose']) ?></strong>
-                            </div>
-                        </div>
 
-                        <div class="col-md-4">
-                            <div class="ub-participant-summary-item">
-                                <small>BOOKING DATE</small>
-                                <strong><?= e($booking['booking_date']) ?></strong>
-                            </div>
-                        </div>
-
-                        <div class="col-md-4">
-                            <div class="ub-participant-summary-item">
-                                <small>BOOKING TIME</small>
                                 <strong>
-                                    <?= e($booking['start_time']) ?> -
+                                    <?= e($booking['topic_purpose']) ?>
+                                </strong>
+
+                            </div>
+
+                        </div>
+
+                        <div class="col-md-4">
+
+                            <div class="ub-participant-summary-item">
+
+                                <small>BOOKING DATE</small>
+
+                                <strong>
+                                    <?= e($booking['booking_date']) ?>
+                                </strong>
+
+                            </div>
+
+                        </div>
+
+                        <div class="col-md-4">
+
+                            <div class="ub-participant-summary-item">
+
+                                <small>BOOKING TIME</small>
+
+                                <strong>
+                                    <?= e($booking['start_time']) ?>
+                                    -
                                     <?= e($booking['end_time']) ?>
                                 </strong>
+
                             </div>
+
                         </div>
 
                     </div>
@@ -463,47 +738,69 @@ $justSaved = isset($_GET['saved']) && !$errors;
             <?php if ($isLocked): ?>
 
                 <div class="alert alert-info" role="alert">
-                    This booking is <strong><?= e($booking['status']) ?></strong>.
+
+                    This booking is
+                    <strong><?= e($booking['status']) ?></strong>.
+
                     Participants can no longer be added or changed.
+
                 </div>
 
             <?php else: ?>
 
                 <?php if ($justSaved): ?>
+
                     <div class="alert alert-success" role="alert">
-                        Participants saved.
+                        Participants saved successfully.
                     </div>
+
                 <?php endif; ?>
 
                 <?php if ($belowMin): ?>
+
                     <div class="alert alert-warning" role="alert">
-                        This room needs at least <strong><?= (int) $minParticipants ?></strong> participants.
-                        You have <?= count($saved) ?>. Add <?= (int) ($minParticipants - count($saved)) ?> more
-                        before an administrator can approve your booking.
+
+                        This room needs at least
+                        <strong><?= (int) $minParticipants ?></strong>
+                        participants.
+
+                        You currently have <?= (int) $savedCount ?>.
+
+                        Add <?= (int) ($minParticipants - $savedCount) ?> more
+                        before continuing to equipment selection.
+
                     </div>
+
                 <?php endif; ?>
 
-                <?php if (count($saved) === 0): ?>
+                <?php if ($savedCount === 0): ?>
+
                     <div class="alert alert-secondary" role="alert">
-                        Add at least one participant within 15 minutes, or this booking
-                        will be released so other users can book the time slot.
+
+                        Add your group members using the form below.
+
                     </div>
+
                 <?php endif; ?>
 
             <?php endif; ?>
 
             <!-- VALIDATION ERRORS -->
 
-            <?php if ($errors): ?>
+            <?php if (!empty($errors)): ?>
 
                 <div class="alert alert-danger" role="alert">
 
                     <strong>Please check the following:</strong>
 
                     <ul class="mb-0 mt-2">
-                        <?php foreach (array_unique($errors) as $err): ?>
-                            <li><?= e($err) ?></li>
+
+                        <?php foreach (array_unique($errors) as $error): ?>
+
+                            <li><?= e($error) ?></li>
+
                         <?php endforeach; ?>
+
                     </ul>
 
                 </div>
@@ -515,36 +812,56 @@ $justSaved = isset($_GET['saved']) && !$errors;
             <section class="ub-card ub-participants-card">
 
                 <div class="ub-participants-card-header">
-                    <h2>Saved Participants</h2>
+
+                    <h2>
+                        Saved Participants
+                    </h2>
+
                 </div>
 
                 <div class="ub-participants-card-body">
 
                     <div class="ub-participants-list-heading">
 
-                        <strong>Participant List</strong>
+                        <strong>
+                            Participant List
+                        </strong>
 
                         <span class="ub-participants-count">
-                            <?= count($saved) ?> / <?= (int) $maxParticipants ?> Participants
+
+                            <?= (int) $savedCount ?>
+                            /
+                            <?= (int) $maxParticipants ?>
+                            Participants
+
                             (minimum <?= (int) $minParticipants ?>)
-                            <?= count($saved) ?> / <?= $maxParticipants ?> Participants
+
                         </span>
 
                     </div>
 
-                    <?php if ($saved): ?>
+                    <?php if (!empty($saved)): ?>
 
                         <div class="table-responsive">
 
                             <table class="table table-bordered table-hover">
 
                                 <thead>
+
                                     <tr>
+
                                         <th>Line</th>
+
                                         <th>Participant Name</th>
-                                        <th><?= e($participantNumberLabel) ?></th>
+
+                                        <th>
+                                            <?= e($participantNumberLabel) ?>
+                                        </th>
+
                                         <th>Department</th>
+
                                     </tr>
+
                                 </thead>
 
                                 <tbody>
@@ -552,10 +869,23 @@ $justSaved = isset($_GET['saved']) && !$errors;
                                     <?php foreach ($saved as $participant): ?>
 
                                         <tr>
-                                            <td><?= e($participant['line_number']) ?></td>
-                                            <td><?= e($participant['participant_name']) ?></td>
-                                            <td><?= e($participant['student_no']) ?></td>
-                                            <td><?= e($participant['department']) ?></td>
+
+                                            <td>
+                                                <?= (int) $participant['line_number'] ?>
+                                            </td>
+
+                                            <td>
+                                                <?= e($participant['participant_name']) ?>
+                                            </td>
+
+                                            <td>
+                                                <?= e($participant['student_no']) ?>
+                                            </td>
+
+                                            <td>
+                                                <?= e($participant['department']) ?>
+                                            </td>
+
                                         </tr>
 
                                     <?php endforeach; ?>
@@ -569,11 +899,15 @@ $justSaved = isset($_GET['saved']) && !$errors;
                     <?php else: ?>
 
                         <div class="ub-empty-state bg-light rounded">
-                            <strong>No participants saved yet.</strong>
+
+                            <strong>
+                                No participants saved yet.
+                            </strong>
 
                             <p class="mb-0 mt-2">
                                 Add your group members using the form below.
                             </p>
+
                         </div>
 
                     <?php endif; ?>
@@ -591,12 +925,15 @@ $justSaved = isset($_GET['saved']) && !$errors;
                 </a>
 
             <?php elseif ($remaining > 0): ?>
-            <?php if ($remaining > 0): ?>
 
                 <section class="ub-card ub-participants-card">
 
                     <div class="ub-participants-card-header">
-                        <h2>Add Participants</h2>
+
+                        <h2>
+                            Add Participants
+                        </h2>
+
                     </div>
 
                     <div class="ub-participants-card-body">
@@ -606,9 +943,15 @@ $justSaved = isset($_GET['saved']) && !$errors;
                         </h3>
 
                         <p class="ub-form-help mb-3">
-                            You can add up to <?= $remaining ?> more participant(s).
+
+                            You can add up to
+                            <?= (int) $remaining ?>
+                            more participant(s).
+
                             Leave a row completely empty if you do not need it.
+
                             All three fields are required for every participant entered.
+
                         </p>
 
                         <form
@@ -626,25 +969,34 @@ $justSaved = isset($_GET['saved']) && !$errors;
                             <?php for ($i = 0; $i < $remaining; $i++): ?>
 
                                 <?php
+
                                 $old = $oldRows[$i] ?? [
                                     'name' => '',
                                     'student_no' => '',
                                     'department' => ''
                                 ];
+
                                 ?>
 
                                 <div class="ub-participant-form-row">
 
                                     <div class="ub-participant-row-title">
-                                        Participant <?= $i + count($saved) + 1 ?>
+
+                                        Participant
+                                        <?= (int) ($savedCount + $i + 1) ?>
+
                                     </div>
 
                                     <div class="row g-3">
 
+                                        <!-- PARTICIPANT NAME -->
+
                                         <div class="col-md-4">
 
                                             <label class="form-label">
+
                                                 Participant Name
+
                                             </label>
 
                                             <input
@@ -659,10 +1011,14 @@ $justSaved = isset($_GET['saved']) && !$errors;
 
                                         </div>
 
+                                        <!-- STUDENT / EMPLOYEE NUMBER -->
+
                                         <div class="col-md-3">
 
                                             <label class="form-label">
+
                                                 <?= e($participantNumberLabel) ?>
+
                                             </label>
 
                                             <input
@@ -679,10 +1035,14 @@ $justSaved = isset($_GET['saved']) && !$errors;
 
                                         </div>
 
+                                        <!-- DEPARTMENT -->
+
                                         <div class="col-md-5">
 
                                             <label class="form-label">
+
                                                 Department
+
                                             </label>
 
                                             <input
@@ -703,22 +1063,32 @@ $justSaved = isset($_GET['saved']) && !$errors;
 
                             <?php endfor; ?>
 
+                            <!-- FORM BUTTONS -->
+
                             <div class="ub-form-actions">
 
-                                <button type="submit" class="btn-ub">
+                                <button
+                                    type="submit"
+                                    class="btn-ub"
+                                >
                                     Save Participants and Continue →
                                 </button>
 
-                                <?php if (!$belowMin && count($saved) > 0): ?>
+                                <?php if (!$belowMin && $savedCount > 0): ?>
+
                                     <a
                                         href="equipment.php?booking_id=<?= (int) $bookingId ?>"
                                         class="btn-ub-outline"
                                     >
                                         Skip to Equipment
                                     </a>
+
                                 <?php endif; ?>
 
-                                <a href="dashboard.php" class="btn-ub-outline">
+                                <a
+                                    href="dashboard.php"
+                                    class="btn-ub-outline"
+                                >
                                     Dashboard
                                 </a>
 
@@ -733,23 +1103,36 @@ $justSaved = isset($_GET['saved']) && !$errors;
             <?php else: ?>
 
                 <div class="alert alert-info">
-                    This booking already has the maximum of <?= (int) $maxParticipants ?> participants.
-                    This booking already has the maximum of <?= $maxParticipants ?> participants.
+
+                    This booking already has the maximum of
+                    <?= (int) $maxParticipants ?>
+                    participants.
+
                 </div>
 
-                <a
-                    href="equipment.php?booking_id=<?= (int) $bookingId ?>"
-                    class="btn-ub"
-                >
-                    Continue to Equipment →
-                </a>
+                <?php if (!$belowMin): ?>
+
+                    <a
+                        href="equipment.php?booking_id=<?= (int) $bookingId ?>"
+                        class="btn-ub"
+                    >
+                        Continue to Equipment →
+                    </a>
+
+                <?php endif; ?>
 
             <?php endif; ?>
 
+            <!-- FOOTER -->
+
             <footer class="ub-footer">
-                © 2026 University of Baguio. All rights reserved.
+
+                © <?= date('Y') ?> University of Baguio. All rights reserved.
+
                 <br>
+
                 Study Room Booking System
+
             </footer>
 
         </div>
@@ -757,6 +1140,8 @@ $justSaved = isset($_GET['saved']) && !$errors;
     </main>
 
 </div>
+
+<!-- OPTIONAL ROW VALIDATION -->
 
 <script>
 document.querySelectorAll('.ub-participant-form-row').forEach(function (row) {
@@ -772,6 +1157,7 @@ document.querySelectorAll('.ub-participant-form-row').forEach(function (row) {
         fields.forEach(function (field) {
             field.required = hasValue;
         });
+
     }
 
     fields.forEach(function (field) {
@@ -779,6 +1165,7 @@ document.querySelectorAll('.ub-participant-form-row').forEach(function (row) {
     });
 
     updateRequired();
+
 });
 </script>
 
